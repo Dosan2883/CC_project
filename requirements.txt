@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pypdf
+pyjwt
+boto3>=1.35,<2
+redis>=5,<8
+python-dotenv>=1,<2
+# Python 3.14 RC2 lacks a typing argument used by newer Pydantic releases.
+pydantic==2.12.0; python_full_version == "3.14.0rc2"

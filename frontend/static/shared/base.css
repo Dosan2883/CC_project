@@ -1,0 +1,21 @@
+:root {
+    --bg:#eef0f4; --panel:#ffffff; --side:#f8f9fb; --text:#1f2430; --muted:#6b7280; --line:#e3e6ec;
+    --accent:#2563eb; --accent-soft:#e8f0ff; --bubble:#f1f3f7; --mine:#2563eb; --danger:#dc2626; --shadow:0 8px 30px rgba(20,30,60,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0f1115; --panel:#1a1d24; --side:#16181e; --text:#e6e8ee; --muted:#9aa1b0; --line:#2a2e38;
+      --accent:#60a5fa; --accent-soft:#1e2c47; --bubble:#262a33; --mine:#2563eb; --danger:#f87171; --shadow:none;
+    }
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+  input, select, button { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; min-width:0; }
+  input:focus, select:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+  button { cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--mine); color:#fff; border-color:var(--mine); font-weight:600; }
+  button.ghost { background:transparent; }
+  button.danger { color:var(--danger); }
+  h2 { font-size:12px; margin:0; color:var(--muted); font-weight:600; letter-spacing:.02em; }

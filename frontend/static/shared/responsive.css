@@ -1,0 +1,16 @@
+/* ---------- 모바일: 목록 ↔ 채팅 전환 ---------- */
+  @media (max-width:720px) {
+    #app { grid-template-columns:minmax(0,1fr); }
+    #app:not(.in-room) main { display:none; }
+    #app.in-room aside { display:none; }
+    #back { display:inline-block; padding:6px 10px; }
+    .chat-head { flex-wrap:wrap; padding:10px 12px; gap:8px; }
+    .chat-head .titles { flex:1 1 0; }
+    #status { display:none; }
+    .tl { order:3; flex:1 1 100%; }
+    .tl select { flex:1; }
+    #leave { order:2; padding:6px 10px; }
+    .body { max-width:84%; }
+    #form { padding:10px 12px; gap:6px; }
+    #form select { max-width:92px; padding:8px; }
+  }

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 협업 메신저 데모</title>
+<link rel="stylesheet" href="/static/shared/base.css">
+<link rel="stylesheet" href="/static/auth/styles.css">
+<link rel="stylesheet" href="/static/shared/layout.css">
+<link rel="stylesheet" href="/static/rooms/styles.css">
+<link rel="stylesheet" href="/static/chat/styles.css">
+<link rel="stylesheet" href="/static/media/styles.css">
+<link rel="stylesheet" href="/static/shared/feedback.css">
+<link rel="stylesheet" href="/static/shared/responsive.css">
+</head>
+<body>
+
+<div id="login">
+  <div class="logo"><div class="mark">A</div><span id="loginTitle"></span></div>
+  <div class="tabs">
+    <button type="button" id="tabLogin" class="on" data-i="login"></button>
+    <button type="button" id="tabSignup" data-i="signup"></button>
+  </div>
+  <form id="authForm" class="form">
+    <label><span data-i="nickname"></span><input id="user" maxlength="20" autocomplete="username" required></label>
+    <label><span data-i="password"></span><input id="authPw" type="password" maxlength="64" autocomplete="current-password" required></label>
+    <label id="pw2Wrap" style="display:none"><span data-i="passwordConfirm"></span><input id="authPw2" type="password" maxlength="64" autocomplete="new-password"></label>
+    <div id="nickHint" class="hint-small" style="display:none" data-i="nickHint"></div>
+    <label><span data-i="ui"></span>
+      <select id="uiLocale"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option></select></label>
+    <div id="authErr"></div>
+    <button class="primary" id="authSubmit"></button>
+  </form>
+</div>
+
+<div id="app">
+  <aside>
+    <div class="brand"><div class="mark">A</div><strong id="title"></strong></div>
+    <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
+    <details id="preferencesPanel">
+      <summary data-i="languageSettings"></summary>
+      <div class="form">
+        <label><span data-i="ui"></span><select id="prefUiLocale"></select></label>
+        <label><span data-i="srcLang"></span><select id="prefSource"></select></label>
+        <label><span data-i="target"></span><select id="prefTarget"></select></label>
+        <label><span data-i="subtitleLanguage"></span><select id="prefSubtitle"></select></label>
+      </div>
+    </details>
+    <div class="tabs">
+      <button type="button" id="tabCreate" class="on" data-i="tabCreate"></button>
+      <button type="button" id="tabPrivate" data-i="tabPrivate"></button>
+    </div>
+
+    <form id="createForm" class="form">
+      <input id="roomName" maxlength="40" autocomplete="off">
+      <div class="seg">
+        <label><input type="radio" name="vis" value="public" checked><span data-i="vPublic"></span></label>
+        <label><input type="radio" name="vis" value="private"><span data-i="vPrivate"></span></label>
+      </div>
+      <input id="roomPw" type="password" maxlength="64" autocomplete="new-password" style="display:none">
+      <button class="primary" data-i="makeRoom"></button>
+    </form>
+
+    <form id="privateForm" class="form" style="display:none">
+      <input id="privName" maxlength="40" autocomplete="off">
+      <input id="privPw" type="password" maxlength="64" autocomplete="off">
+      <button class="primary" data-i="enterPrivate"></button>
+    </form>
+    <div id="err"></div>
+
+    <h2 data-i="publicRooms"></h2>
+    <div id="publicRooms"></div>
+    <h2 data-i="roomList"></h2>
+    <div id="rooms"></div>
+  </aside>
+
+  <main>
+    <div id="empty" class="empty-state">
+      <div class="mark">💬</div>
+      <strong data-i="pickTitle"></strong>
+      <span data-i="pickDesc"></span>
+    </div>
+
+    <section id="chat">
+      <div class="chat-head">
+        <button id="back" class="ghost" data-i="back"></button>
+        <div class="titles">
+          <strong id="roomTitle"></strong>
+          <div id="members"></div>
+        </div>
+        <span id="status"></span>
+        <label class="tl"><span data-i="target"></span><select id="tgtLang"></select></label>
+        <button id="roomSummary" class="ghost soon" data-i="roomSummary"></button>
+        <button id="leave" class="ghost danger" data-i="leave"></button>
+        <button id="deleteRoom" class="ghost danger" data-i="deleteRoom" hidden></button>
+      </div>
+      <div id="log"></div>
+      <form id="form">
+        <div class="attach-wrap">
+          <button type="button" id="attach">+</button>
+          <div id="attachMenu">
+            <button type="button" class="soon" data-i="attImage"></button>
+            <button type="button" id="attDocBtn" data-i="attDoc"></button>
+            <button type="button" class="soon" data-i="attAudio"></button>
+            <button type="button" class="soon" data-i="attVideo"></button>
+          </div>
+          <input type="file" id="fileInput" hidden accept=".pdf,.docx,.txt">
+        </div>
+        <select id="srcLang"></select>
+        <input type="text" id="body" autocomplete="off">
+        <button class="primary" data-i="send"></button>
+      </form>
+    </section>
+  </main>
+</div>
+
+<div id="toast" role="status"></div>
+<script defer src="/static/i18n/messages.js"></script>
+<script defer src="/static/shared/common.js"></script>
+<script defer src="/static/i18n/ui.js"></script>
+<script defer src="/static/auth/index.js"></script>
+<script defer src="/static/rooms/index.js"></script>
+<script defer src="/static/chat/index.js"></script>
+<script defer src="/static/shared/feedback.js"></script>
+<script defer src="/static/media/index.js"></script>
+<script defer src="/static/users/preferences.js"></script>
+<script defer src="/static/app.js"></script>
+</body>
+</html>
