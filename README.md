@@ -50,6 +50,8 @@ tests/                     통합·영속성·워커·이벤트·프런트엔드
 - `GET /api/rooms/{roomId}/members`: 역할과 읽음 순번.
 - `POST /api/rooms/{roomId}/read`: 마지막 읽은 순번을 앞으로만 갱신.
 - `POST /api/files/{mediaId}/complete`: 직접 업로드 완료 확인. 재호출해도 파일 카드가 중복 저장되지 않습니다.
+- `POST /api/ai/translate`: 채팅 메시지 번역(`roomId`, `messageSeq`, `target`). 서버가 저장된 메시지를 직접 읽어 번역하므로 방 멤버만 쓸 수 있습니다.
+- `POST /api/ai/translate-page`: 업로드한 문서의 한 페이지 번역(`mediaId`, `page`, `target`). 긴 페이지는 문단 단위로 나눠 번역합니다.
 - `GET /health/live`, `GET /health/ready`: 실행·DB/Redis 준비 상태.
 
 기존 인증·방·파일·미디어·WebSocket 주소도 유지합니다. 방 삭제는 논리 삭제이며 메시지·원본·기존 결과를 물리 삭제하지 않습니다.
@@ -61,7 +63,9 @@ tests/                     통합·영속성·워커·이벤트·프런트엔드
 - [Learner Lab 연결·배포·장애 복구 절차](docs/learner-lab.md)
 - [Notion 요구사항 대응·키 모델·보존 정책·다음 구현 순서](docs/implementation.md)
 
-번역·요약 AI, OCR, STT, 자막 생성과 CloudWatch 상세 지표는 아직 구현하지 않았습니다. 이번 구현은 문서가 우선순위로 정한 저장·분산 채팅·업로드·워커 기반과 설정·읽음·방 삭제입니다.
+번역은 AWS Lambda 함수 URL을 호출합니다. `.env`의 `TRANSLATE_URL`, `TRANSLATE_SECRET`을 채우면 켜지고, 비워 두면 번역 API만 503을 돌려줍니다. 같은 원문·대상 언어는 DB에 캐시하고, 사용자별 시간당 호출 한도(`TRANSLATE_HOURLY_LIMIT`, 기본 60)가 있습니다. 문서 번역은 페이지 단위로 하며 나뉜 조각 수만큼 한도를 씁니다. URL과 비밀 값은 `.env`나 SSM에만 두고 저장소에 올리지 않습니다.
+
+요약 AI, OCR, STT, 자막 생성과 CloudWatch 상세 지표는 아직 구현하지 않았습니다. 이번 구현은 문서가 우선순위로 정한 저장·분산 채팅·업로드·워커 기반과 설정·읽음·방 삭제입니다.
 
 ## 검증
 

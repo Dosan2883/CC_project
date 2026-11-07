@@ -5,6 +5,35 @@ function clearFilePolling() { for (const timer of filePollers.values()) clearTim
 const fmtSize = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
+/* 문서 페이지 번역: 서버가 저장된 추출 글자를 직접 읽어 번역한다. 동의 확인 함수는 chat/index.js의 것을 쓴다. */
+function pageTranslateButton(mediaId, page, pre) {
+  const button = el("button", "page-translate", t("translate")); button.type = "button";
+  button.onclick = async () => {
+    const shown = pre.parentElement.querySelector(`.translation[data-page="${page}"]`);
+    if (shown) { shown.remove(); button.textContent = t("translate"); return; }  // 다시 누르면 번역을 숨긴다
+    if (!hasTranslateConsent()) {
+      if (!confirm(t("translateConsent"))) return;
+      rememberTranslateConsent();
+    }
+    const roomId = currentRoom?.roomId, target = targetLang;
+    button.disabled = true; button.textContent = t("translating");
+    try {
+      const result = await api("/api/ai/translate-page", "POST", { mediaId, page, target });
+      if (currentRoom?.roomId !== roomId) return;  // 요청 중에 다른 방으로 옮긴 경우
+      const box = el("div", "translation"); box.dataset.page = String(page);
+      box.append(el("small", null, `${t("translated")} · ${LANG_NAMES[target]}`), el("div", null, result.translated));  // textContent로 XSS 방지
+      button.after(box);
+      button.textContent = t("translateHide");
+    } catch (error) {
+      toast(t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail"));
+    } finally {
+      button.disabled = false;
+      if (!button.nextElementSibling?.classList?.contains("translation")) button.textContent = t("translate");
+    }
+  };
+  return button;
+}
+
 function fileCard(m) {
   const box = el("div", "file");
   const top = el("div", "file-top");
@@ -27,7 +56,10 @@ function fileCard(m) {
         text.replaceChildren();
         r.pages.forEach((page, i) => {
           if (r.pages.length > 1) text.append(el("h4", null, `${t("pageN")} ${i + 1}`));
-          text.append(el("pre", null, page || t("emptyText")));
+          const pre = el("pre", null, page || t("emptyText"));
+          // 번역 버튼은 본문 위에 둔다. 긴 페이지에서도 스크롤 없이 바로 보이고, 번역은 버튼 아래(원문 위)에 붙는다.
+          if (page && page.trim()) text.append(pageTranslateButton(m.mediaId, i + 1, pre));
+          text.append(pre);
         });
         loaded = true;
       } catch (e) { toast(t("failed")); return; }

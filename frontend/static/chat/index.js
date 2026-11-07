@@ -127,11 +127,12 @@ function addMessage(m) {
   const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = m.sourceLanguage;
   if (!m.media) meta.append(badge);
   const bubble = m.media ? fileCard(m.media) : Object.assign(document.createElement("div"), { className: "bubble", textContent: m.bodyOriginal });  // 원문 그대로 표시
-  // 번역/요약 버튼: 기능은 아직 없고 자리만 만들어 둔다.
+  // 번역: 서버가 저장된 메시지를 직접 읽어 번역한다. 요약은 아직 자리만 만들어 둔다.
   const acts = document.createElement("div"); acts.className = "acts";
-  for (const k of ["translate", "summarize"]) {
-    const b = document.createElement("button"); b.type = "button"; b.className = "soon"; b.textContent = t(k); acts.append(b);
-  }
+  const translateButton = document.createElement("button"); translateButton.type = "button"; translateButton.textContent = t("translate");
+  translateButton.onclick = () => translateMessage(m, bubble, translateButton);
+  const summarizeButton = document.createElement("button"); summarizeButton.type = "button"; summarizeButton.className = "soon"; summarizeButton.textContent = t("summarize");
+  acts.append(translateButton, summarizeButton);
   body.append(meta, bubble);
   if (mine) {
     const receipt = document.createElement("span"); receipt.className = "read-receipt";
@@ -140,6 +141,38 @@ function addMessage(m) {
   if (!m.media) body.append(acts);
   row.append(av, body);
   pushToLog(row, mine);
+}
+
+/* ---------- 메시지 번역 ---------- */
+const TRANSLATE_CONSENT_KEY = "translateConsent";
+const hasTranslateConsent = () => { try { return localStorage.getItem(TRANSLATE_CONSENT_KEY) === "1"; } catch { return false; } };
+const rememberTranslateConsent = () => { try { localStorage.setItem(TRANSLATE_CONSENT_KEY, "1"); } catch {} };
+const translateErrors = { 429: "translateLimit", 503: "translateOff", 502: "translateFail" };
+
+async function translateMessage(m, bubble, button) {
+  const shown = bubble.parentElement.querySelector(".translation");
+  if (shown) { shown.remove(); button.textContent = t("translate"); return; }  // 다시 누르면 번역을 숨긴다
+  if (!hasTranslateConsent()) {  // 처음 한 번, 텍스트가 외부 AI 서비스로 나간다는 것을 알린다
+    if (!confirm(t("translateConsent"))) return;
+    rememberTranslateConsent();
+  }
+  const roomId = currentRoom.roomId, target = targetLang;
+  button.disabled = true; button.textContent = t("translating");
+  try {
+    const result = await api("/api/ai/translate", "POST", { roomId, messageSeq: m.messageSeq, target });
+    if (currentRoom?.roomId !== roomId) return;  // 요청 중에 다른 방으로 옮긴 경우
+    const box = document.createElement("div"); box.className = "translation";
+    const label = document.createElement("small"); label.textContent = `${t("translated")} · ${LANG_NAMES[target]}`;
+    const text = document.createElement("div"); text.textContent = result.translated;  // textContent로 XSS 방지
+    box.append(label, text);
+    bubble.after(box);
+    button.textContent = t("translateHide");
+  } catch (error) {
+    button.textContent = t("translate");
+    toast(t(error.code === "TEXT_TOO_LONG" ? "translateLong" : translateErrors[error.status] || "translateFail"));
+  } finally {
+    button.disabled = false;
+  }
 }
 
 $("form").onsubmit = e => {

@@ -4,6 +4,8 @@ import logging
 import os
 import secrets
 
+from app.ai.client import LambdaTranslator
+from app.ai.service import TranslationService
 from app.auth.repository import AccountRepository, PersistentThrottle
 from app.auth.service import AuthService, TokenSigner, load_secret
 from app.chat.connections import ConnectionManager
@@ -50,3 +52,5 @@ def notify_room(room_id, payload):
 storage = S3Storage(config.S3_BUCKET, config.aws_client("s3")) if config.S3_BUCKET else LocalStorage(config.DATA_DIR)
 sqs = config.aws_client("sqs") if config.MEDIA_QUEUE_URL else None
 media_svc = MediaService(storage, notify_room, db, room_repo, sqs, config.MEDIA_QUEUE_URL)
+# 번역은 업로드한 문서의 추출 글자도 읽어야 해서 media_svc가 만들어진 뒤에 구성한다.
+translation = TranslationService(db, room_repo, LambdaTranslator(config.TRANSLATE_URL, config.TRANSLATE_SECRET), config.TRANSLATE_HOURLY_LIMIT, media=media_svc)

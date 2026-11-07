@@ -42,3 +42,8 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; }
   @media (hover:none) { .acts { opacity:1; } }
   .acts button { font-size:11px; padding:1px 8px; border-radius:999px; background:transparent; color:var(--muted); }
   .acts button:hover { color:var(--accent); border-color:var(--accent); }
+  .translation { padding:6px 10px; border-left:3px solid var(--accent); background:var(--bubble); border-radius:8px; font-size:14px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .translation small { display:block; color:var(--muted); font-size:11px; margin-bottom:2px; }
+  .file-text .page-translate { font-size:11px; padding:1px 8px; border-radius:999px; margin:4px 0; background:transparent; color:var(--muted); }
+  .file-text .page-translate:hover { color:var(--accent); border-color:var(--accent); }
+  .file-text .translation { margin-bottom:6px; }
