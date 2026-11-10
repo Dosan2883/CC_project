@@ -58,8 +58,13 @@ async def chat(ws: WebSocket, room: str, lastSeq: int = 0):
                         raise HTTPException(422, "message too long")
                     if body:
                         lang = data.get("sourceLanguage")
-                        message = await asyncio.to_thread(store.append, room, user, body, lang if lang in LANGUAGES else "und")
+                        client_message_id = data.get("clientMessageId")
+                        message = await asyncio.to_thread(
+                            store.append, room, user, body,
+                            lang if lang in LANGUAGES else "und", None, client_message_id,
+                        )
                         await manager.broadcast(room, message)
+                        await ws.send_json({"type": "message:ack", "clientMessageId": message.get("clientMessageId"), "messageSeq": message["messageSeq"]})
                 elif data.get("type") == "preferences:update":
                     saved = await asyncio.to_thread(preferences.update, user, {key: value for key, value in data.items() if key != "type"})
                     await ws.send_json({"type": "preferences:updated", **saved})
@@ -71,7 +76,7 @@ async def chat(ws: WebSocket, room: str, lastSeq: int = 0):
                 if error.status_code in (403, 404):
                     await ws.close(code=4404 if error.status_code == 404 else 4403)
                     break
-                await ws.send_json({"type": "error", "detail": error.detail})
+                await ws.send_json({"type": "error", "detail": error.detail, "clientMessageId": data.get("clientMessageId") if isinstance(data, dict) else None})
             except ValueError:
                 await ws.send_json({"type": "error", "detail": "invalid event"})
     except (WebSocketDisconnect, RuntimeError):

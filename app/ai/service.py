@@ -6,17 +6,21 @@
 import hashlib
 import re
 import time
+import uuid
 
 from fastapi import HTTPException
 
+from app.ai.contract import MODEL_VERSION
 from app.media.service import MediaError
 
 LANGUAGE_NAMES = {"ko": "Korean", "en": "English", "ja": "Japanese", "zh-CN": "Simplified Chinese", "es": "Spanish", "fr": "French"}
-MODEL_VERSION = "v1"  # 번역 모델이나 프롬프트를 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
 MAX_CHARS = 4000      # Lambda 쪽 입력 제한과 같은 값. 넘으면 잘린 번역이 나오므로 미리 거절한다
 CHUNK_CHARS = 3500    # 문서 페이지를 나눌 때 한 번에 보내는 최대 길이 (MAX_CHARS보다 작게)
 MAX_PAGE_CHARS = 12000  # 한 페이지 번역의 상한. 호출 횟수(=시간과 비용)를 묶어 둔다
 QUOTA_WINDOW = 3600
+CLAIM_LEASE = 180
+CLAIM_WAIT = 30
+RESERVATION_LEASE = 180
 SENTENCE_END = re.compile(r"(?<=[.!?。！？])\s+")
 
 
@@ -71,14 +75,8 @@ class TranslationService:
         if message.get("sourceLanguage") == target:  # 이미 같은 언어면 호출하지 않는다
             return {"translated": text, "target": target, "cached": False, "sameLanguage": True}
 
-        key, cached = self.cached(target, text)
-        if cached:  # 캐시를 쓰면 외부 호출도 한도 소모도 없다
-            return {"translated": cached, "target": target, "cached": True, "sameLanguage": False}
-
-        self.reserve(user)
-        translated = self.translator.translate(text, LANGUAGE_NAMES[target])
-        saved = self.remember(key, target, translated)
-        return {"translated": saved, "target": target, "cached": False, "sameLanguage": False}
+        translated, cached = self.translate_text(text, target, user)
+        return {"translated": translated, "target": target, "cached": cached, "sameLanguage": False}
 
     def translate_page(self, media_id, page, target, user):
         """업로드한 문서의 한 페이지를 번역한다. 서버가 저장된 추출 글자를 직접 읽는다."""
@@ -105,9 +103,44 @@ class TranslationService:
         if cached:
             return {"translated": cached, "target": target, "page": page, "cached": True}
         chunks = split_text(text)
-        self.reserve(user, len(chunks))  # 나뉜 조각 수만큼 호출 한도를 쓴다
-        translated = "\n\n".join(self.translator.translate(chunk, LANGUAGE_NAMES[target]) for chunk in chunks)
-        return {"translated": self.remember(key, target, translated), "target": target, "page": page, "cached": False}
+        if len(chunks) == 1:
+            translated, was_cached = self.translate_text(text, target, user)
+            return {"translated": translated, "target": target, "page": page, "cached": was_cached}
+        page_key = "TRANSLATION#" + key[:2]
+        lease, saved = self.acquire(page_key, key)
+        if saved is not None:
+            return {"translated": saved, "target": target, "page": page, "cached": True}
+        reservation_ids = []
+        try:
+            chunk_records = [self.cached(target, chunk) for chunk in chunks]
+            missing = [index for index, (_, value) in enumerate(chunk_records) if value is None]
+            reservation_ids = self.reserve(user, len(missing)) if missing else []
+            reservation_by_index = dict(zip(missing, reservation_ids))
+            output = []
+            for index, (chunk_key, value) in enumerate(chunk_records):
+                if value is None:
+                    reservation_id = reservation_by_index[index]
+                    chunk_pk = "TRANSLATION#" + chunk_key[:2]
+                    chunk_lease, value = self.acquire(chunk_pk, chunk_key)
+                    if value is not None:
+                        self.release(user, [reservation_id])
+                    else:
+                        self.mark_attempted(user, [reservation_id])
+                        later = [reservation_by_index[i] for i in missing if i > index]
+                        try:
+                            value = self.translator.translate(chunks[index], LANGUAGE_NAMES[target])
+                            value = self.complete(chunk_pk, chunk_key, target, value, chunk_lease)
+                        except Exception:
+                            self.release(user, later)
+                            self.release_claim(chunk_pk, chunk_key, chunk_lease)
+                            raise
+                output.append(value)
+            translated = "\n\n".join(output)
+            return {"translated": self.complete(page_key, key, target, translated, lease), "target": target, "page": page, "cached": False}
+        except Exception:
+            self.release(user, reservation_ids)
+            self.release_claim(page_key, key, lease)
+            raise
 
     @staticmethod
     def cache_key(target, text):
@@ -116,20 +149,118 @@ class TranslationService:
     def cached(self, target, text):
         key = self.cache_key(target, text)
         record = self.db.get("TRANSLATION#" + key[:2], key)
-        return key, (record.value["translated"] if record else None)
+        value = record.value if record else None
+        # 이전 번역 캐시에는 state 필드가 없었다. translated가 있으면 완료로 간주한다.
+        return key, (value["translated"] if value and isinstance(value.get("translated"), str) and value["translated"].strip() else None)
 
     def remember(self, key, target, translated):
-        saved = self.db.update("TRANSLATION#" + key[:2], key, lambda value: value or {"translated": translated, "target": target, "createdAt": int(time.time() * 1000)})
+        saved = self.db.update("TRANSLATION#" + key[:2], key, lambda value: value if value and value.get("translated") else {"state": "COMPLETED", "translated": translated, "target": target, "modelVersion": MODEL_VERSION, "createdAt": int(time.time() * 1000)})
         return saved["translated"]
 
-    def reserve(self, user, cost=1):
-        """호출 전에 한도를 먼저 차감한다. 한도를 넘으면 외부를 부르지 않는다."""
+    def acquire(self, pk, key):
+        """캐시 키를 DB 조건부 업데이트로 선점해 다중 프로세스의 중복 호출을 막는다."""
+        token = uuid.uuid4().hex
         now = time.time()
+        value = self.db.update(pk, key, lambda current: (
+            current if current and current.get("translated") else
+            current if current and current.get("state") == "IN_PROGRESS" and current.get("leaseUntil", 0) > now else
+            {"state": "IN_PROGRESS", "leaseToken": token, "leaseUntil": now + CLAIM_LEASE, "modelVersion": MODEL_VERSION}
+        ))
+        if value.get("translated"):
+            return None, value["translated"]
+        if value.get("leaseToken") == token:
+            return token, None
+
+        deadline = time.monotonic() + CLAIM_WAIT
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            record = self.db.get(pk, key)
+            current = record.value if record else None
+            if current and current.get("translated"):
+                return None, current["translated"]
+            if not current or current.get("leaseUntil", 0) <= time.time():
+                return self.acquire(pk, key)
+        raise HTTPException(503, "TRANSLATION_IN_PROGRESS")
+
+    def complete(self, pk, key, target, translated, token):
+        def finish(current):
+            if current and current.get("translated"):
+                return current
+            if not current or current.get("leaseToken") != token:
+                raise HTTPException(503, "TRANSLATION_LEASE_LOST")
+            return {"state": "COMPLETED", "translated": translated, "target": target,
+                    "modelVersion": MODEL_VERSION, "createdAt": int(time.time() * 1000)}
+        return self.db.update(pk, key, finish)["translated"]
+
+    def release_claim(self, pk, key, token):
+        def release(value):
+            if value and value.get("state") == "IN_PROGRESS" and value.get("leaseToken") == token:
+                return {"state": "FAILED", "leaseUntil": 0, "modelVersion": MODEL_VERSION}
+            return value
+        self.db.update(pk, key, release)
+
+    def translate_text(self, text, target, user):
+        key, cached = self.cached(target, text)
+        if cached:
+            return cached, True
+        pk = "TRANSLATION#" + key[:2]
+        lease, saved = self.acquire(pk, key)
+        if saved is not None:
+            return saved, True
+        reservation = None
+        try:
+            reservation = self.reserve(user, 1)[0]
+            self.mark_attempted(user, [reservation])
+            translated = self.translator.translate(text, LANGUAGE_NAMES[target])
+            return self.complete(pk, key, target, translated, lease), False
+        except Exception:
+            if reservation:
+                self.release(user, [reservation])
+            self.release_claim(pk, key, lease)
+            raise
+
+    def reserve(self, user, cost=1):
+        """전체 작업의 한도를 예약한다. 호출을 시작한 조각만 실제 사용량으로 확정한다."""
+        if cost <= 0:
+            return []
+        now = time.time()
+        ids = [uuid.uuid4().hex for _ in range(cost)]
 
         def transform(value):
-            calls = [stamp for stamp in (value or {}).get("calls", []) if stamp > now - QUOTA_WINDOW]
-            if len(calls) + cost > self.hourly_limit:
+            value = value or {}
+            legacy = [stamp for stamp in value.get("calls", []) if stamp > now - QUOTA_WINDOW]
+            entries = [entry for entry in value.get("entries", []) if
+                       (entry.get("state") == "reserved" and entry.get("expiresAt", 0) > now) or
+                       (entry.get("state") == "attempted" and entry.get("createdAt", 0) > now - QUOTA_WINDOW)]
+            if len(legacy) + len(entries) + cost > self.hourly_limit:
                 raise HTTPException(429, "TRANSLATE_LIMIT")
-            return {"calls": calls + [now] * cost}
+            entries.extend({"id": item, "state": "reserved", "createdAt": now, "expiresAt": now + RESERVATION_LEASE} for item in ids)
+            return {"calls": legacy, "entries": entries}
 
+        self.db.update("TRANSLATE_QUOTA", user.casefold(), transform)
+        return ids
+
+    def mark_attempted(self, user, reservation_ids):
+        if not reservation_ids:
+            return
+        wanted, now = set(reservation_ids), time.time()
+        def transform(value):
+            value = value or {"calls": [], "entries": []}
+            entries = []
+            for entry in value.get("entries", []):
+                if entry.get("id") in wanted and entry.get("state") == "reserved":
+                    entry = {**entry, "state": "attempted", "createdAt": now}
+                entries.append(entry)
+            return {**value, "entries": entries}
+        self.db.update("TRANSLATE_QUOTA", user.casefold(), transform)
+
+    def release(self, user, reservation_ids):
+        """시작하지 않은 호출의 예약만 반환한다. 시작한 호출은 환급하지 않는다."""
+        if not reservation_ids:
+            return
+        wanted = set(reservation_ids)
+        def transform(value):
+            value = value or {"calls": [], "entries": []}
+            return {**value, "entries": [entry for entry in value.get("entries", [])
+                                           if not (entry.get("id") in wanted and entry.get("state") == "reserved")]}
         self.db.update("TRANSLATE_QUOTA", user.casefold(), transform)

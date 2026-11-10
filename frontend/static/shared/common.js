@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 let locale = (navigator.language || "ko").slice(0,2);
 if (!I18N[locale]) locale = "en";
-let token = null, ws, me, currentRoom, lastSeq = 0, retry = 0, reconnectTimer, roomsTimer, lastRooms = [], prevMsg = null;
+let token = null, ws, me, currentRoom, lastSeq = 0, retry = 0, reconnectTimer, roomsTimer, lastRooms = [], prevMsg = null, viewGeneration = 0;
 let targetLang = locale;
 
 const hue = s => { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return h; };
@@ -19,4 +19,7 @@ async function api(path, method = "GET", body) {
   }
   return res.json();
 }
-function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+function send(obj) {
+  if (!ws || ws.readyState !== 1) return false;
+  try { ws.send(JSON.stringify(obj)); return true; } catch { return false; }
+}

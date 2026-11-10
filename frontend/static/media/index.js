@@ -15,11 +15,11 @@ function pageTranslateButton(mediaId, page, pre) {
       if (!confirm(t("translateConsent"))) return;
       rememberTranslateConsent();
     }
-    const roomId = currentRoom?.roomId, target = targetLang;
+    const roomId = currentRoom?.roomId, target = targetLang, generation = viewGeneration, authToken = token;
     button.disabled = true; button.textContent = t("translating");
     try {
       const result = await api("/api/ai/translate-page", "POST", { mediaId, page, target });
-      if (currentRoom?.roomId !== roomId) return;  // 요청 중에 다른 방으로 옮긴 경우
+      if (currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;  // 이전 방·계정의 응답은 폐기
       const box = el("div", "translation"); box.dataset.page = String(page);
       box.append(el("small", null, `${t("translated")} · ${LANG_NAMES[target]}`), el("div", null, result.translated));  // textContent로 XSS 방지
       button.after(box);
@@ -35,6 +35,7 @@ function pageTranslateButton(mediaId, page, pre) {
 }
 
 function fileCard(m) {
+  const cardRoomId = currentRoom?.roomId, cardGeneration = viewGeneration;
   const box = el("div", "file");
   const top = el("div", "file-top");
   const info = el("div", "file-info");
@@ -47,7 +48,23 @@ function fileCard(m) {
   const text = el("div", "file-text"); text.hidden = true;
   box.append(top, bar, msg, act, text);
 
-  let loaded = false;
+  let loaded = false, pollFailures = 0;
+  const isCurrent = () => cards[m.mediaId] === update && currentRoom?.roomId === cardRoomId && viewGeneration === cardGeneration;
+  function schedulePoll(delay) {
+    clearTimeout(filePollers.get(m.mediaId));
+    filePollers.set(m.mediaId, setTimeout(async () => {
+      if (!isCurrent()) { filePollers.delete(m.mediaId); return; }
+      try {
+        const state = await api(`/api/media/${m.mediaId}`);
+        if (!isCurrent()) return;
+        pollFailures = 0; update(state);
+      } catch (error) {
+        if (!isCurrent() || error.status === 404 || error.status === 403) { filePollers.delete(m.mediaId); return; }
+        pollFailures++;
+        schedulePoll(Math.min(2000 * 2 ** Math.min(pollFailures, 4), 30000));
+      }
+    }, delay));
+  }
   async function toggleText(btn) {
     if (!text.hidden) { text.hidden = true; btn.textContent = t("viewText"); return; }
     if (!loaded) {
@@ -69,9 +86,7 @@ function fileCard(m) {
   function update(s) {
     clearTimeout(filePollers.get(m.mediaId)); filePollers.delete(m.mediaId);
     if (["PENDING", "PROCESSING", "UPLOADING", "UPLOADED"].includes(s.status)) {
-      filePollers.set(m.mediaId, setTimeout(() => {
-        if (cards[m.mediaId] === update && currentRoom) api(`/api/media/${m.mediaId}`).then(update).catch(() => {});
-      }, 2000));
+      schedulePoll(2000);
     }
     st.textContent = t("st" + s.status); st.dataset.s = s.status;
     const busy = s.status === "PENDING" || s.status === "PROCESSING";
@@ -81,7 +96,12 @@ function fileCard(m) {
     if (s.status === "FAILED") {
       msg.classList.add("err"); msg.textContent = t("fe_" + s.errorCode) || t("failed");
       const b = el("button", null, t("retry")); b.type = "button";
-      b.onclick = () => api(`/api/media/${m.mediaId}/process`, "POST").catch(() => toast(t("failed")));
+      b.onclick = async () => {
+        b.disabled = true;
+        try { update(await api(`/api/media/${m.mediaId}/process`, "POST")); }
+        catch { toast(t("failed")); }
+        finally { b.disabled = false; }
+      };
       act.append(b);
     } else if (s.status === "PENDING" && s.errorCode === "RETRYING") {
       msg.textContent = t("fe_RETRYING");
@@ -93,7 +113,9 @@ function fileCard(m) {
   cards[m.mediaId] = update;
   update({ status: "PENDING", progress: 0, errorCode: null, needsOcr: false });
   // 기록에서 다시 불러온 카드도 현재 처리 상태를 보여 준다.
-  api(`/api/media/${m.mediaId}`).then(update).catch(() => {});
+  api(`/api/media/${m.mediaId}`).then(state => { if (isCurrent()) update(state); }).catch(error => {
+    if (isCurrent() && error.status !== 404 && error.status !== 403) { pollFailures++; schedulePoll(Math.min(2000 * 2 ** Math.min(pollFailures, 4), 30000)); }
+  });
   return box;
 }
 

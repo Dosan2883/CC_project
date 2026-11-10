@@ -1,9 +1,12 @@
 """연결은 각 서버, 이벤트와 접속 현황은 Redis, 기록은 DB에서 관리한다."""
 import asyncio
+import logging
 from contextlib import suppress
 
 from fastapi import HTTPException
 from app.chat.events import EventBus
+
+log = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -66,7 +69,12 @@ class ConnectionManager:
                     self.remove(room, user, ws)
 
     async def broadcast(self, room, payload):
-        await self.bus.publish(room, payload)
+        # DB 저장은 호출자에게서 먼저 완료된다. Redis가 끊겨도 이 서버의
+        # 연결에는 즉시 전달하고, DB replay가 복구된 다른 서버의 누락을 채운다.
+        try:
+            await self.bus.publish(room, payload)
+        except Exception:
+            log.exception("Redis publish failed; delivering from the local durable record")
         await self.deliver(room, payload)
 
     async def publish_presence(self):

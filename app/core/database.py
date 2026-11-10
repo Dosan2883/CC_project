@@ -53,6 +53,9 @@ class Database:
                 time.sleep(random.uniform(0, min(0.002 * 2 ** attempt, 0.1)))
         raise Conflict("concurrent update retry limit")
 
+    def query_range(self, pk, lower, upper):
+        return [record for record in self.query(pk, lower) if record.sk < upper]
+
 
 class SQLiteDatabase(Database):
     def __init__(self, path: Path):
@@ -79,6 +82,14 @@ class SQLiteDatabase(Database):
     def query(self, pk, prefix=""):
         with self.connect() as connection:
             rows = connection.execute("SELECT sk, version, payload FROM records WHERE pk=? AND sk>=? AND sk<? ORDER BY sk", (pk, prefix, prefix + chr(0x10ffff))).fetchall()
+        return [Record(pk, sk, decode(payload), version) for sk, version, payload in rows]
+
+    def query_range(self, pk, lower, upper):
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT sk, version, payload FROM records WHERE pk=? AND sk>=? AND sk<? ORDER BY sk",
+                (pk, lower, upper),
+            ).fetchall()
         return [Record(pk, sk, decode(payload), version) for sk, version, payload in rows]
 
     def commit(self, changes):
@@ -114,6 +125,23 @@ class DynamoDatabase(Database):
 
     def query(self, pk, prefix=""):
         args = dict(TableName=self.table_name, KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)", ExpressionAttributeValues={":pk": {"S": pk}, ":prefix": {"S": prefix}}, ConsistentRead=True)
+        records = []
+        while True:
+            response = self.client.query(**args)
+            records.extend(self.record(item) for item in response.get("Items", []))
+            if not response.get("LastEvaluatedKey"):
+                return records
+            args["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+    def query_range(self, pk, lower, upper):
+        args = dict(
+            TableName=self.table_name,
+            KeyConditionExpression="pk = :pk AND sk BETWEEN :lower AND :upper",
+            ExpressionAttributeValues={
+                ":pk": {"S": pk}, ":lower": {"S": lower}, ":upper": {"S": upper},
+            },
+            ConsistentRead=True,
+        )
         records = []
         while True:
             response = self.client.query(**args)
