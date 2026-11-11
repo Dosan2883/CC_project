@@ -63,7 +63,7 @@ tests/                     통합·영속성·워커·이벤트·프런트엔드
 - [Learner Lab 연결·배포·장애 복구 절차](docs/learner-lab.md)
 - [Notion 요구사항 대응·키 모델·보존 정책·다음 구현 순서](docs/implementation.md)
 
-번역은 AWS Lambda 함수 URL을 호출합니다. `.env`의 `TRANSLATE_URL`, `TRANSLATE_SECRET`을 채우면 켜지고, 비워 두면 번역 API만 503을 돌려줍니다. 같은 원문·대상 언어는 DB에 캐시하고, 사용자별 시간당 호출 한도(`TRANSLATE_HOURLY_LIMIT`, 기본 60)가 있습니다. 문서 번역은 페이지 단위로 하며 필요한 조각 수를 먼저 예약하고 실제 호출을 시작한 조각만 사용량에 확정합니다. Lambda 성공 응답은 `translated`, `modelVersion: "v1"`, 정상 `finishReason`(예: `end_turn`), `truncated: false`를 포함해야 합니다. 누락·잘림·비정상 종료는 캐시하지 않고 502로 처리하므로, Lambda 응답도 이 계약에 맞춰야 합니다. URL과 비밀 값은 `.env`나 SSM에만 두고 저장소에 올리지 않습니다.
+번역은 AWS Lambda 함수 URL을 호출합니다. Lambda 소스는 별도 배포용 [lambda/translation](lambda/translation/) 폴더에 있습니다. `.env`의 `TRANSLATE_URL`, `TRANSLATE_SECRET`을 채우면 앱 번역이 켜지고, 비워 두면 번역 API만 503을 돌려줍니다. 같은 원문·대상 언어는 DB에 캐시하고, 사용자별 시간당 호출 한도(`TRANSLATE_HOURLY_LIMIT`, 기본 60)가 있습니다. 문서 번역은 페이지 단위로 하며 필요한 조각 수를 먼저 예약하고 실제 호출을 시작한 조각만 사용량에 확정합니다. Lambda 성공 응답은 `translated`, `modelVersion: "v1"`, 정상 `finishReason`(예: `end_turn`), `truncated: false`를 포함해야 합니다. 누락·잘림·비정상 종료는 캐시하지 않고 502로 처리하므로, Lambda 응답도 이 계약에 맞춰야 합니다. URL과 비밀 값은 `.env`나 SSM에만 두고 저장소에 올리지 않습니다.
 
 요약 AI, OCR, STT, 자막 생성과 CloudWatch 상세 지표는 아직 구현하지 않았습니다. 이번 구현은 문서가 우선순위로 정한 저장·분산 채팅·업로드·워커 기반과 설정·읽음·방 삭제입니다.
 
