@@ -78,7 +78,10 @@ class ConnectionManager:
         await self.deliver(room, payload)
 
     async def publish_presence(self):
-        await self.bus.presence()
+        try:
+            await self.bus.presence()
+        except Exception:
+            log.exception("Redis presence failed; local sockets remain available")
         await self.deliver("", {"type": "presence:refresh"})
 
     async def start(self):

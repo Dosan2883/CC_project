@@ -1,0 +1,80 @@
+const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+const assert = require('node:assert/strict');
+const base = fs.readFileSync(path.join(__dirname, 'check_frontend.cjs'), 'utf8');
+const harness = new Function('require', '__dirname', base.slice(0, base.indexOf('(async () => {')) + '\nreturn {context,elements,evaluate,tick,html,root,timers};')(require, __dirname);
+const {context,elements,evaluate,tick,html,root,timers} = harness;
+const reply = (body, status=200) => ({ok:status<400,status,json:async()=>body});
+const room = {roomId:'new',name:'New room',visibility:'public',joined:true,createdBy:'owner',memberCount:1,online:0};
+const deferred = () => { let resolve; const promise = new Promise(r=>resolve=r); return {promise,resolve}; };
+(async () => {
+  for (const match of html.matchAll(/<script defer src="\/static\/([^"]+)"><\/script>/g)) vm.runInContext(fs.readFileSync(path.join(root,'frontend/static',match[1]),'utf8'),context);
+  await tick(); evaluate('token="one"; me="owner"'); context.testRoom=room;
+  context.fetch=async url=>url.endsWith('/public')?reply({detail:'down'},503):reply([room]);
+  await evaluate('loadRooms()');
+  assert.equal(evaluate('lastRooms[0].roomId'),'new');
+  assert.equal(elements.get('roomsRetry').hidden,false);
+  const pending=deferred();
+  context.document.querySelector=()=>({value:'public'});
+  context.fetch=(url,opts={})=> opts.method==='POST'?Promise.resolve(reply(room)):url.endsWith('/public')?pending.promise:Promise.resolve(reply(url.endsWith('/members')?[]:[room]));
+  elements.get('roomName').value=room.name;
+  await elements.get('createForm').onsubmit({preventDefault(){}});
+  assert.equal(evaluate('currentRoom.roomId'),'new');
+  assert.equal(evaluate('lastRooms[0].roomId'),'new');
+  assert.ok(elements.get('rooms').children.length);
+  elements.get('rooms').children[0].onclick();
+  assert.equal(evaluate('currentRoom.roomId'),'new');
+  // Unfinished public list times out without undoing successful creation.
+  for (const [id,timer] of [...timers]) if(timer.ms===10000) { timers.delete(id); timer.fn(); }
+  await tick();
+  assert.equal(evaluate('currentRoom.roomId'),'new');
+  pending.resolve(reply([room])); await tick();
+  // An old generation/old account must never repopulate the new session.
+  evaluate('cancelRoomLoads(); lastRooms=[]; lastPublic=[]');
+  const old=[];
+  context.fetch=()=>{ const d=deferred(); old.push(d); return d.promise; };
+  const loading=evaluate('loadRooms()');
+  evaluate('logout(false); token="two"; me="another"');
+  old.forEach(d=>d.resolve(reply([room]))); await loading; await tick();
+  assert.equal(evaluate('lastRooms.length'),0);
+  context.fetch=async()=>reply([{...room,roomId:'latest'}]);
+  await evaluate('loadRooms()');
+  assert.equal(evaluate('lastRooms[0].roomId'),'latest');
+  const previous=[]; evaluate('cancelRoomLoads()');
+  context.fetch=()=>{ const d=deferred(); previous.push(d); return d.promise; };
+  const stale=evaluate('loadRooms()');
+  assert.equal(evaluate('loadRooms()'), stale, 'polls must share an in-flight load');
+  evaluate('cancelRoomLoads()'); context.fetch=async()=>reply([{...room,roomId:'newest'}]);
+  await evaluate('loadRooms()'); previous.forEach(d=>d.resolve(reply([room]))); await stale;
+  assert.equal(evaluate('lastRooms[0].roomId'),'newest');
+  // Old 401s must not log out the current account.
+  const unauthorized=deferred(); context.fetch=()=>unauthorized.promise;
+  const request=evaluate('api("/api/rooms")').catch(()=>{});
+  evaluate('token="three"'); unauthorized.resolve(reply({detail:'old'},401)); await request;
+  assert.equal(evaluate('token'),'three');
+  // Private creation enters immediately too, without publishing a private room.
+  evaluate('cancelRoomLoads(); lastPublic=[]; currentRoom=null');
+  context.document.querySelector=()=>({value:'private'});
+  elements.get('roomName').value='Private'; elements.get('roomPw').value='pass123';
+  context.fetch=(url,opts={})=>Promise.resolve(reply(opts.method==='POST'?{...room,visibility:'private'}:url.endsWith('/members')?[]:[]));
+  await elements.get('createForm').onsubmit({preventDefault(){}});
+  assert.equal(evaluate('currentRoom.visibility'),'private');
+  assert.equal(evaluate('lastPublic.length'),0);
+  context.fetch=async()=>reply({detail:'down'},503);
+  await elements.get('leave').onclick();
+  assert.equal(evaluate('currentRoom.roomId'),'new');
+  context.fetch=async()=>reply({detail:'denied'},403);
+  await elements.get('leave').onclick(); assert.equal(evaluate('currentRoom.roomId'),'new');
+  context.fetch=async()=>{ throw new Error('network'); };
+  await elements.get('leave').onclick(); assert.equal(evaluate('currentRoom.roomId'),'new');
+  context.fetch=async()=>reply({detail:'missing'},404);
+  await elements.get('leave').onclick();
+  assert.equal(evaluate('currentRoom'),null);
+  // Consecutive messages retain their individual selection controls outside meta.
+  evaluate('readMembers=[]; currentRoom=testRoom; prevMsg=null');
+  evaluate('addMessage({sender:"owner",sentAt:1,messageSeq:1,bodyOriginal:"one"}); addMessage({sender:"owner",sentAt:2,messageSeq:2,bodyOriginal:"two"})');
+  const row=elements.get('log').children.at(-1), body=row.children[1];
+  assert.ok(row.className.includes('cont'));
+  const acts=body.children.find(child=>child.className==='acts');
+  assert.ok(acts.children.some(child=>child.type==='checkbox'));
+  console.log('Room regression checks passed: independent lists, create/open, timeout, stale session, private creation, leave errors, consecutive selection');
+})().catch(e=>{console.error(e);process.exitCode=1;});

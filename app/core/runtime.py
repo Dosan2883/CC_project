@@ -54,3 +54,6 @@ sqs = config.aws_client("sqs") if config.MEDIA_QUEUE_URL else None
 media_svc = MediaService(storage, notify_room, db, room_repo, sqs, config.MEDIA_QUEUE_URL)
 # 번역은 업로드한 문서의 추출 글자도 읽어야 해서 media_svc가 만들어진 뒤에 구성한다.
 translation = TranslationService(db, room_repo, LambdaTranslator(config.TRANSLATE_URL, config.TRANSLATE_SECRET), config.TRANSLATE_HOURLY_LIMIT, media=media_svc)
+from app.ai.jobs import AIJobs
+ai_queue_url = os.getenv("AI_QUEUE_URL", "")
+ai_jobs = AIJobs(db, room_repo, media_svc, translation, config.aws_client("sqs") if ai_queue_url else None, ai_queue_url)

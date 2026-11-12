@@ -16,7 +16,7 @@ from app.media.queue import MediaWorker
 from app.rooms.repository import retry_conflicts
 
 log = logging.getLogger(__name__)
-ALLOWED_EXT = {"pdf": "document", "docx": "document", "txt": "document"}
+ALLOWED_EXT = {"pdf": "document", "docx": "document", "txt": "document", "jpg": "image", "jpeg": "image", "png": "image"}
 MAX_BYTES = 20 * 1024 * 1024
 UPLOAD_TTL = 300
 MAX_RETRIES = 3
@@ -43,6 +43,17 @@ def looks_valid(ext: str, data: bytes) -> bool:
         return data[:5] == b"%PDF-"
     if ext == "docx":
         return data[:4] == b"PK\x03\x04"
+    if ext in ("jpg", "jpeg", "png"):
+        try:
+            from PIL import Image
+            import io
+            with Image.open(io.BytesIO(data)) as source:
+                if source.width * source.height > 25_000_000 or source.format != ("PNG" if ext == "png" else "JPEG"):
+                    return False
+                source.verify()
+            return True
+        except Exception:
+            return False
     return True
 
 
@@ -164,7 +175,7 @@ class MediaService:
             log.exception("SQS send failed; durable pending job will be recovered")
 
     @retry_conflicts
-    def start_job(self, media_id):
+    def start_job(self, media_id, language=None):
         record = self.db.get("MEDIA", "ASSET#" + media_id)
         if not record:
             raise MediaError(404, "MEDIA_NOT_FOUND")
@@ -173,9 +184,14 @@ class MediaService:
         if asset["status"] != "UPLOADED":
             raise MediaError(409, "NOT_UPLOADED")
         previous = self.db.get("MEDIA_JOBS", media_id)
-        if previous and previous.value["status"] not in ("FAILED", "CANCELLED"):
+        if previous and (previous.value["status"] not in ("FAILED", "CANCELLED", "COMPLETED") or (previous.value["status"] == "COMPLETED" and language is None)):
             return previous.value
         job = self.new_job(asset)
+        if language is not None:
+            from app.media.ocr import LANGUAGES
+            if language != "auto" and language not in LANGUAGES:
+                raise MediaError(422, "INVALID_LANGUAGE")
+            job["ocrLanguage"] = language
         self.db.commit([room.change(room.value, check=True), record.change({**asset, "jobId": media_id}),
                         Change("MEDIA_JOBS", media_id, previous.version if previous else None, job)])
         self.emit(asset)
@@ -257,7 +273,8 @@ class MediaService:
             def progress(done, total):
                 self.update_leased(job_id, lease, {"progress": int(done * 100 / max(1, total))})
                 self.emit(asset)
-            result = extract(asset["ext"], self.storage.get_limited(asset["s3Key"], MAX_BYTES), progress)
+            result = extract(asset["ext"], self.storage.get_limited(asset["s3Key"], MAX_BYTES), progress, job.get("ocrLanguage", "auto"))
+            result["version"] = asset.get("extractionVersion", 0) + 1
             key = f'extracted/{asset["mediaId"]}/{lease}.json'
             self.storage.put(key, json.dumps(result, ensure_ascii=False).encode())
             self.finish(job_id, lease, asset, result, key)
@@ -285,6 +302,9 @@ class MediaService:
         if record.value.get("leaseToken") != lease or record.value["status"] != "PROCESSING":
             raise LeaseLost()
         media = self.db.get("MEDIA", "ASSET#" + asset["mediaId"])
+        if media.value.get("extractionVersion", 0) != asset.get("extractionVersion", 0):
+            self.db.commit([record.change({**record.value, "status": "CANCELLED", "errorCode": "SOURCE_VERSION_CHANGED", "leaseUntil": 0})])
+            return
         try:
             room = self.rooms.record(asset["roomId"])
         except HTTPException:
@@ -292,4 +312,6 @@ class MediaService:
             return
         self.db.commit([room.change(room.value, check=True),
                         record.change({**record.value, "status": "COMPLETED", "progress": 100, "errorCode": None, "leaseUntil": 0}),
-                        media.change({**media.value, "transcriptKey": key, "pageCount": len(result["pages"]), "needsOcr": result["needsOcr"]})])
+                        media.change({**media.value, "transcriptKey": key, "extractionVersion": result["version"], "pageCount": len(result["pages"]), "needsOcr": result["needsOcr"],
+                                      "detectedLanguages": sorted({p["language"] for p in result.get("pageDetails", []) if p.get("language")}),
+                                      "recognitionModel": sorted({p["model"] for p in result.get("pageDetails", []) if p.get("model")})})])

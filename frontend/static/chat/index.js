@@ -76,6 +76,7 @@ function enterRoom(r) {
   if (currentRoom && currentRoom.roomId === r.roomId && ws) { $("app").classList.add("in-room"); return; }
   closeSocket();
   currentRoom = r; viewGeneration++; lastSeq = 0; retry = 0; prevMsg = null;
+  aiSelections.clear();
   loadOutbox(r.roomId);
   clearFilePolling(); readBadges.clear(); readMembers = []; acknowledgedRead = r.lastReadSeq || 0;
   for (const k in cards) delete cards[k];
@@ -107,8 +108,17 @@ function leaveView() {  // 방을 떠나지 않고 화면만 닫는다
 $("back").onclick = leaveView;
 $("leave").onclick = async () => {
   if (!confirm(t("confirmLeave"))) return;
-  try { await api(`/api/rooms/${currentRoom.roomId}/leave`, "POST"); } catch {}
-  leaveView();
+  if (!currentRoom) return;
+  const roomId = currentRoom.roomId, generation = viewGeneration, requestToken = token;
+  const current = () => token === requestToken && viewGeneration === generation && currentRoom?.roomId === roomId;
+  try {
+    await api(`/api/rooms/${roomId}/leave`, "POST");
+    if (current()) { cancelRoomLoads(); leaveView(); }
+  } catch (e) {
+    if (!current()) return;
+    if (e.status === 404) { cancelRoomLoads(); leaveView(); toast(t("roomDeleted")); }
+    else toast(e.status === 403 ? "방 나가기 권한을 확인할 수 없습니다. 다시 시도하세요." : "방 나가기에 실패했습니다. 다시 시도하세요.");
+  }
 };
 $("deleteRoom").onclick = async () => {
   if (!currentRoom || currentRoom.createdBy !== me || !confirm(t("confirmDeleteRoom"))) return;
@@ -189,7 +199,13 @@ function addMessage(m) {
   const acts = document.createElement("div"); acts.className = "acts";
   const translateButton = document.createElement("button"); translateButton.type = "button"; translateButton.textContent = t("translate");
   translateButton.onclick = () => translateMessage(m, bubble, translateButton);
-  const summarizeButton = document.createElement("button"); summarizeButton.type = "button"; summarizeButton.className = "soon"; summarizeButton.textContent = t("summarize");
+  const summarizeButton = document.createElement("button"); summarizeButton.type = "button"; summarizeButton.textContent = t("summarize");
+  summarizeButton.onclick = () => runAi([{kind:"message", messageSeq:m.messageSeq}], "summarize");
+  if (!m.media) {
+    const selection = document.createElement("input"); selection.type = "checkbox"; selection.title = "회의 요약에 포함";
+    selection.onchange = () => selection.checked ? aiSelections.set(m.messageSeq, {kind:"message", messageSeq:m.messageSeq}) : aiSelections.delete(m.messageSeq);
+    acts.append(selection);
+  }
   acts.append(translateButton, summarizeButton);
   body.append(meta, bubble);
   if (mine) {

@@ -34,6 +34,7 @@ class WebSocket {
   close() {}
 }
 const context = vm.createContext({
+  AbortController,
   console, document, navigator: {language: "ko-KR"}, window: {addEventListener() {}},
   location: {protocol: "http:", host: "localhost"}, WebSocket, confirm: () => true,
   sessionStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},

@@ -15,16 +15,31 @@ from app.rooms.service import check_room_password, find_by_name, get_room, newes
 router = APIRouter()
 
 
+def room_list(user, public=False):
+    views = []
+    for room in room_repo.all():
+        if public and room["visibility"] != "public":
+            continue
+        if not public and not room_repo.member(room["roomId"], user):
+            continue
+        try:
+            views.append(room_view(room["roomId"], user))
+        except HTTPException as error:
+            if error.status_code != 404:
+                raise
+    return newest_first(views)
+
+
 @router.get("/api/rooms")
 def my_rooms(user: str = Depends(current_user)):
     """내가 들어가 있는 방(공개·비공개 모두)."""
-    return newest_first([room_view(room["roomId"], user) for room in room_repo.all() if room_repo.member(room["roomId"], user)])
+    return room_list(user)
 
 
 @router.get("/api/rooms/public")
 def public_rooms(user: str = Depends(current_user)):
     """공개방 목록. 비공개방은 절대 포함하지 않는다."""
-    return newest_first([room_view(room["roomId"], user) for room in room_repo.all() if room["visibility"] == "public"])
+    return room_list(user, public=True)
 
 
 @router.post("/api/rooms")

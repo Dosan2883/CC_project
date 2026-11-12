@@ -22,9 +22,13 @@ async def lifespan(_: FastAPI):
     await runtime.manager.start()
     if RUN_MEDIA_WORKER:
         runtime.media_svc.queue.start()
+    if not runtime.ai_queue_url:
+        runtime.ai_jobs.queue.start()
     try:
         yield
     finally:
+        if not runtime.ai_queue_url:
+            await asyncio.to_thread(runtime.ai_jobs.queue.stop)
         if RUN_MEDIA_WORKER:
             await asyncio.to_thread(runtime.media_svc.queue.stop)
         await runtime.manager.stop()

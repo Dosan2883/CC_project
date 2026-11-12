@@ -67,6 +67,7 @@
       <button class="primary" data-i="enterPrivate"></button>
     </form>
     <div id="err"></div>
+    <button type="button" id="roomsRetry" hidden>목록 다시 불러오기</button>
 
     <h2 data-i="publicRooms"></h2>
     <div id="publicRooms"></div>
@@ -99,12 +100,12 @@
         <div class="attach-wrap">
           <button type="button" id="attach">+</button>
           <div id="attachMenu">
-            <button type="button" class="soon" data-i="attImage"></button>
+            <button type="button" id="attImageBtn" data-i="attImage"></button>
             <button type="button" id="attDocBtn" data-i="attDoc"></button>
             <button type="button" class="soon" data-i="attAudio"></button>
             <button type="button" class="soon" data-i="attVideo"></button>
           </div>
-          <input type="file" id="fileInput" hidden accept=".pdf,.docx,.txt">
+          <input type="file" id="fileInput" hidden accept=".pdf,.docx,.txt,.jpg,.jpeg,.png">
         </div>
         <select id="srcLang"></select>
         <input type="text" id="body" autocomplete="off">
@@ -123,6 +124,7 @@
 <script defer src="/static/chat/index.js"></script>
 <script defer src="/static/shared/feedback.js"></script>
 <script defer src="/static/media/index.js"></script>
+<script defer src="/static/ai.js"></script>
 <script defer src="/static/users/preferences.js"></script>
 <script defer src="/static/app.js"></script>
 </body>

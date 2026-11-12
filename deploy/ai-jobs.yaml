@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SQS AI to Lambda with DLQ and durable job recovery
+Parameters:
+  RoleArn:
+    Type: String
+  CodeBucket:
+    Type: String
+  CodeKey:
+    Type: String
+  TableName:
+    Type: String
+  MediaBucket:
+    Type: String
+  MediaQueueUrl:
+    Type: String
+  RedisUrl:
+    Type: String
+  AuthSecret:
+    Type: String
+    NoEcho: true
+  TranslateUrl:
+    Type: String
+  TranslateSecret:
+    Type: String
+    NoEcho: true
+Resources:
+  DeadLetters:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 540
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetters.Arn
+        maxReceiveCount: 5
+  Worker:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !Ref RoleArn
+      Timeout: 90
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Environment:
+        Variables:
+          DATA_BACKEND: dynamodb
+          DYNAMODB_TABLE: !Ref TableName
+          S3_BUCKET: !Ref MediaBucket
+          MEDIA_QUEUE_URL: !Ref MediaQueueUrl
+          AI_QUEUE_URL: !Ref Queue
+          REDIS_URL: !Ref RedisUrl
+          AUTH_SECRET: !Ref AuthSecret
+          TRANSLATE_URL: !Ref TranslateUrl
+          TRANSLATE_SECRET: !Ref TranslateSecret
+          RUN_MEDIA_WORKER: '0'
+  Mapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt Queue.Arn
+      FunctionName: !Ref Worker
+      BatchSize: 1
+      FunctionResponseTypes: [ReportBatchItemFailures]
+  Recovery:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: rate(1 minute)
+      Targets:
+        - Arn: !GetAtt Worker.Arn
+          Id: Recovery
+  RecoveryPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Worker
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt Recovery.Arn
+Outputs:
+  AIQueueUrl:
+    Value: !Ref Queue
+  AIDLQUrl:
+    Value: !Ref DeadLetters

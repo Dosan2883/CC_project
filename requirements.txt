@@ -1,6 +1,8 @@
 fastapi
 uvicorn[standard]
 pypdf
+Pillow>=10,<13
+pypdfium2>=4,<6
 pyjwt
 boto3>=1.35,<2
 redis>=5,<8

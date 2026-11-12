@@ -68,18 +68,17 @@ def _parse_body(event):
     return text.strip(), target.strip()
 
 
-def _translate(text, target):
+def _translate(text, target, action="translate"):
     global _bedrock
     if _bedrock is None:
         _bedrock = boto3.client("bedrock-runtime")
 
+    instruction = ("Summarize only the selected evidence in the target language. Include decisions and action items only if explicitly present. Cite evidence using [1], [2], etc. Do not invent facts. Return only the summary with citations."
+                   if action == "summarize" else
+                   "Translate the user's text into the requested target language. Preserve meaning, tone, names, numbers and paragraph breaks. Return only the translated text without explanation.")
     response = _bedrock.converse(
         modelId=os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID),
-        system=[{
-            "text": "Translate the user's text into the requested target language. "
-                    "Preserve the meaning, tone, names, numbers, and paragraph breaks. "
-                    "Return only the translated text without explanation.",
-        }],
+        system=[{"text": instruction}],
         messages=[{
             "role": "user",
             "content": [{"text": f"Target language: {target}\n\nText:\n{text}"}],
@@ -128,11 +127,18 @@ def handler(event, context):
 
     try:
         text, target = _parse_body(event)
+        raw_body = event.get("body", "{}")
+        if event.get("isBase64Encoded"):
+            raw_body = base64.b64decode(raw_body).decode("utf-8")
+        payload = json.loads(raw_body) if isinstance(raw_body, str) else raw_body
+        action = payload.get("action", "translate")
+        if action not in ("translate", "summarize"):
+            raise ValueError("invalid action")
     except (ValueError, json.JSONDecodeError, UnicodeDecodeError, base64.binascii.Error):
         return _json_response(400, {"error": "invalid request"})
 
     try:
-        return _json_response(200, _translate(text, target))
+        return _json_response(200, _translate(text, target, action))
     except Exception:
         logger.exception("Bedrock translation request failed")
         return _json_response(502, {"error": "translation unavailable"})

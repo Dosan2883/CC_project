@@ -114,9 +114,15 @@ Resources:
             chown messenger:messenger /var/lib/messenger
             TOKEN=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
             MODE=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/tags/instance/ServiceMode)
+            PRECHECK=''
             case "$MODE" in
               web) COMMAND='-m uvicorn main:app --host 0.0.0.0 --port 8000' ;;
-              worker) COMMAND='-m app.media.worker' ;;
+              worker)
+                dnf install -y libgomp mesa-libGL glib2
+                /opt/messenger/.venv/bin/pip install -r /opt/messenger/requirements-ocr.txt
+                runuser -u messenger -- env HOME=/var/lib/messenger PADDLE_PDX_CACHE_HOME=/var/lib/messenger/paddlex PADDLE_HOME=/var/lib/messenger/paddle /opt/messenger/.venv/bin/python /opt/messenger/scripts/prepare_ocr.py
+                PRECHECK='ExecStartPre=/opt/messenger/.venv/bin/python /opt/messenger/scripts/prepare_ocr.py --check'
+                COMMAND='-m app.media.worker' ;;
               *) exit 1 ;;
             esac
             cat > /etc/systemd/system/messenger.service <<EOF
@@ -129,6 +135,10 @@ Resources:
             WorkingDirectory=/opt/messenger
             EnvironmentFile=/etc/messenger.env
             Environment=RUN_MEDIA_WORKER=0
+            Environment=HOME=/var/lib/messenger
+            Environment=PADDLE_PDX_CACHE_HOME=/var/lib/messenger/paddlex
+            Environment=PADDLE_HOME=/var/lib/messenger/paddle
+            $PRECHECK
             ExecStart=/opt/messenger/.venv/bin/python $COMMAND
             Restart=always
             RestartSec=5

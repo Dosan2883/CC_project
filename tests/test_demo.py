@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import AsyncMock, patch
 import support
 from pathlib import Path
 from urllib.error import HTTPError
@@ -100,6 +101,7 @@ class DemoIntegrationTests(unittest.TestCase):
         with connect(address, proxy=None, open_timeout=5) as ws:
             ws.send(json.dumps({"type": "auth", "token": token}))
             self.assertEqual(json.loads(ws.recv(timeout=5))["type"], "presence")
+
             ws.send(json.dumps({"type": "message:send", "body": "hello", "sourceLanguage": "en"}))
             message = json.loads(ws.recv(timeout=5))
             self.assertEqual((message["bodyOriginal"], message["messageSeq"]), ("hello", 1))
@@ -110,6 +112,17 @@ class DemoIntegrationTests(unittest.TestCase):
         with connect(address + "?lastSeq=1", proxy=None, open_timeout=5) as ws:
             ws.send(json.dumps({"type": "auth", "token": token}))
             self.assertEqual(json.loads(ws.recv(timeout=5))["type"], "presence")
+
+    def test_websocket_accepts_messages_during_presence_outage(self):
+        token = self.signup("presenceOutageUser")
+        room = self.room(token, "Presence outage room")
+        with patch.object(runtime.manager.bus, "presence", AsyncMock(side_effect=ConnectionError("Redis down"))):
+            with connect(f"ws://127.0.0.1:{self.port}/ws/{room}", proxy=None, open_timeout=5) as ws:
+                ws.send(json.dumps({"type":"auth", "token":token}))
+                self.assertEqual(json.loads(ws.recv(timeout=5))["type"], "presence")
+                ws.send(json.dumps({"type":"message:send", "body":"still connected", "sourceLanguage":"en"}))
+                event = json.loads(ws.recv(timeout=5))
+                self.assertEqual(event["bodyOriginal"], "still connected")
 
     def test_document_upload_and_extraction(self):
         token = self.signup("uploader")
@@ -130,7 +143,7 @@ class DemoIntegrationTests(unittest.TestCase):
             if time.monotonic() > deadline:
                 self.fail("document processing did not complete")
             time.sleep(0.01)
-        self.assertEqual(self.request(path + "/transcript", token=token)[1], {"pages": [payload.decode()], "needsOcr": False})
+        self.assertEqual(self.request(path + "/transcript", token=token)[1], {"pages": [payload.decode()], "needsOcr": False, "version": 1})
 
     def test_page_and_all_static_assets(self):
         status, page = self.request("/")
@@ -173,7 +186,13 @@ class DemoIntegrationTests(unittest.TestCase):
             ws.send(json.dumps({"type": "auth", "token": guest}))
             self.assertEqual(json.loads(ws.recv(timeout=5))["type"], "presence")
             self.assertEqual(self.request(f"/api/rooms/{room}", "DELETE", token=owner)[0], 200)
-            self.assertEqual(json.loads(ws.recv(timeout=5))["type"], "room:deleted")
+            deadline = time.monotonic() + 5
+            while True:
+                event = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
+                if event["type"] == "room:deleted":
+                    break
+                if time.monotonic() >= deadline:
+                    self.fail("room deletion event not received")
         self.assertEqual(self.request(f'/api/media/{upload["mediaId"]}', token=owner)[0], 404)
         self.assertEqual(self.request(f"/api/rooms/{room}/read", "POST", {"lastReadSeq": 1}, owner)[0], 404)
         self.assertTrue(all(item["roomId"] != room for item in self.request("/api/rooms/public", token=owner)[1]))

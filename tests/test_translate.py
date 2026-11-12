@@ -270,7 +270,7 @@ class SplitTextTests(unittest.TestCase):
 class FakeFunctionUrl(BaseHTTPRequestHandler):
     """Lambda 함수 URL을 흉내 내는 로컬 서버. 받은 요청을 기록한다."""
     seen = []
-    reply = (200, {"translated": "Hello"})
+    reply = (200, {"translated": "Hello", "finishReason":"end_turn", "truncated":False, "modelVersion":"v1"})
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -301,7 +301,7 @@ class LambdaTranslatorTests(unittest.TestCase):
 
     def setUp(self):
         FakeFunctionUrl.seen.clear()
-        FakeFunctionUrl.reply = (200, {"translated": "Hello"})
+        FakeFunctionUrl.reply = (200, {"translated": "Hello", "finishReason":"end_turn", "truncated":False, "modelVersion":"v1"})
 
     def test_sends_secret_header_and_parses_reply(self):
         self.assertEqual(LambdaTranslator(self.url, "s3cret").translate("안녕하세요", "English"), "Hello")

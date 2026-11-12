@@ -71,12 +71,22 @@ function fileCard(m) {
       try {
         const r = await api(`/api/media/${m.mediaId}/transcript`);
         text.replaceChildren();
-        r.pages.forEach((page, i) => {
+        (r.pages || []).forEach((page, i) => {
           if (r.pages.length > 1) text.append(el("h4", null, `${t("pageN")} ${i + 1}`));
           const pre = el("pre", null, page || t("emptyText"));
           // 번역 버튼은 본문 위에 둔다. 긴 페이지에서도 스크롤 없이 바로 보이고, 번역은 버튼 아래(원문 위)에 붙는다.
           if (page && page.trim()) text.append(pageTranslateButton(m.mediaId, i + 1, pre));
           text.append(pre);
+          pageReview(m.mediaId, i + 1, pre, r);
+        });
+        (r.segments || []).forEach(segment => {
+          const label = el("label", null, `${segment.start}–${segment.end}초 · ${segment.text}`);
+          const source = {kind:"segment", mediaId:m.mediaId, start:segment.start, end:segment.end};
+          const select = document.createElement("input"); select.type = "checkbox";
+          select.onchange = () => select.checked ? aiSelections.set(`${m.mediaId}:${segment.start}`, source) : aiSelections.delete(`${m.mediaId}:${segment.start}`);
+          const translate = el("button", null, t("translate")); translate.type = "button"; translate.onclick = () => runAi([source], "translate");
+          const summary = el("button", null, t("summarize")); summary.type = "button"; summary.onclick = () => runAi([source]);
+          label.prepend(select); text.append(label, translate, summary);
         });
         loaded = true;
       } catch (e) { toast(t("failed")); return; }
@@ -90,6 +100,7 @@ function fileCard(m) {
     }
     st.textContent = t("st" + s.status); st.dataset.s = s.status;
     const busy = s.status === "PENDING" || s.status === "PROCESSING";
+    if (busy) loaded = false;
     bar.style.display = busy ? "" : "none"; fill.style.width = s.progress + "%";
     msg.className = "file-msg"; msg.textContent = "";
     act.replaceChildren();
@@ -121,6 +132,7 @@ function fileCard(m) {
 
 const uploadErrors = { UNSUPPORTED_TYPE: "eUpType", FILE_TOO_LARGE: "eUpSize", FILE_CONTENT_MISMATCH: "eUpMismatch" };
 $("attDocBtn").onclick = () => $("fileInput").click();
+$("attImageBtn").onclick = () => $("fileInput").click();
 $("fileInput").onchange = async e => {
   const file = e.target.files[0]; e.target.value = "";
   if (!file || !currentRoom) return;

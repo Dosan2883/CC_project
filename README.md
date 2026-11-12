@@ -65,7 +65,7 @@ tests/                     통합·영속성·워커·이벤트·프런트엔드
 
 번역은 AWS Lambda 함수 URL을 호출합니다. Lambda 소스는 별도 배포용 [lambda/translation](lambda/translation/) 폴더에 있습니다. `.env`의 `TRANSLATE_URL`, `TRANSLATE_SECRET`을 채우면 앱 번역이 켜지고, 비워 두면 번역 API만 503을 돌려줍니다. 같은 원문·대상 언어는 DB에 캐시하고, 사용자별 시간당 호출 한도(`TRANSLATE_HOURLY_LIMIT`, 기본 60)가 있습니다. 문서 번역은 페이지 단위로 하며 필요한 조각 수를 먼저 예약하고 실제 호출을 시작한 조각만 사용량에 확정합니다. Lambda 성공 응답은 `translated`, `modelVersion: "v1"`, 정상 `finishReason`(예: `end_turn`), `truncated: false`를 포함해야 합니다. 누락·잘림·비정상 종료는 캐시하지 않고 502로 처리하므로, Lambda 응답도 이 계약에 맞춰야 합니다. URL과 비밀 값은 `.env`나 SSM에만 두고 저장소에 올리지 않습니다.
 
-요약 AI, OCR, STT, 자막 생성과 CloudWatch 상세 지표는 아직 구현하지 않았습니다. 이번 구현은 문서가 우선순위로 정한 저장·분산 채팅·업로드·워커 기반과 설정·읽음·방 삭제입니다.
+비동기 AI 작업·선택 자료 요약·이미지 및 혼합 PDF OCR·원문 수정 UI를 추가했습니다. [C·D 실행 및 API 안내](docs/ai-ocr.md)를 참고하세요. OCR 워커에는 별도 모델 의존성 설치가 필요하며 실제 모델 품질과 AWS 배포는 추가 검증 대상입니다. STT·자막 생성과 CloudWatch 상세 지표는 아직 구현하지 않았습니다.
 
 ## 검증
 

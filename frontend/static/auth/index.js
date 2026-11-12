@@ -35,6 +35,8 @@ $("authForm").onsubmit = async e => {
   }
 };
 async function startSession(tok, nickname) {
+  cancelRoomLoads(); cancelApiRequests();
+  lastRooms = []; lastPublic = [];
   token = tok; me = nickname; tokenStore.set(tok);
   await languageOptionsReady;
   const saved = await api("/api/users/me/preferences");
@@ -45,9 +47,11 @@ async function startSession(tok, nickname) {
   clearInterval(roomsTimer); loadRooms(); roomsTimer = setInterval(loadRooms, 3000);
 }
 function logout(expired) {
+  cancelRoomLoads(); cancelApiRequests(); viewGeneration++;
   clearFilePolling();
   closeSocket(); currentRoom = null; token = null; me = null; tokenStore.set(null);
   clearInterval(roomsTimer); lastRooms = []; lastPublic = [];
+  renderRooms(); $("roomsRetry").hidden = true;
   $("chat").style.display = "none"; $("empty").style.display = "grid"; $("app").classList.remove("in-room");
   $("app").style.display = "none"; $("login").style.display = "grid";
   $("authErr").textContent = expired ? t("sessionExpired") : "";

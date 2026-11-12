@@ -1,5 +1,12 @@
 """파일 업로드, 처리 요청, 진행 상태 및 추출 결과 API."""
 import asyncio
+import io
+import json
+import uuid
+from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict, Field
+from app.core.database import Conflict
+from app.core.runtime import db
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.auth.dependencies import current_user
@@ -76,14 +83,67 @@ async def complete_upload(media_id: str, user: str = Depends(current_user)):
 
 
 @router.post("/api/media/{media_id}/process")
-def process_media(media_id: str, user: str = Depends(current_user)):
+def process_media(media_id: str, language: str | None = None, user: str = Depends(current_user)):
     """추출 작업을 큐에 등록한다. 이미 있는 작업은 새로 만들지 않는다. AWS에서는 SQS Media에 등록."""
     media_member(media_id, user)
     try:
-        media_svc.start_job(media_id)
+        media_svc.start_job(media_id, language)
         return media_svc.status(media_id)
     except MediaError as e:
         raise HTTPException(e.status, e.code)
+
+
+class PageCorrection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int = Field(ge=1)
+    text: str = Field(max_length=12000)
+    language: str
+
+
+@router.patch("/api/media/{media_id}/pages/{page}")
+def correct_page(media_id: str, page: int, body: PageCorrection, user: str = Depends(current_user)):
+    from app.media.ocr import LANGUAGES
+    asset = media_member(media_id, user)
+    if body.language not in LANGUAGES:
+        raise HTTPException(422, "INVALID_LANGUAGE")
+    record = db.get("MEDIA", "ASSET#" + media_id)
+    result = media_svc.transcript(media_id)
+    if not 1 <= page <= len(result["pages"]):
+        raise HTTPException(422, "INVALID_PAGE")
+    if body.version != result.get("version", 1):
+        raise HTTPException(409, "VERSION_CONFLICT")
+    result.setdefault("originalPages", list(result["pages"]))
+    result["pages"][page - 1] = body.text
+    result["version"] = body.version + 1
+    corrections = result.setdefault("corrections", {})
+    corrections[str(page)] = {"language": body.language, "user": user, "version": result["version"]}
+    key = f"extracted/{media_id}/revision-{uuid.uuid4().hex}.json"
+    media_svc.storage.put(key, json.dumps(result, ensure_ascii=False).encode())
+    room = room_repo.record(asset["roomId"])
+    member = db.get("ROOM#" + asset["roomId"], "MEMBER#" + user)
+    if not member:
+        raise HTTPException(403, "NOT_A_MEMBER")
+    try:
+        db.commit([room.change(room.value, check=True), member.change(member.value, check=True),
+                   record.change({**record.value, "transcriptKey": key, "extractionVersion": result["version"]})])
+    except Conflict:
+        raise HTTPException(409, "VERSION_CONFLICT")
+    return result
+
+
+@router.get("/api/media/{media_id}/pages/{page}/image")
+def page_image(media_id: str, page: int, user: str = Depends(current_user)):
+    from app.media.ocr import raster
+    asset = media_member(media_id, user)
+    if asset["ext"] not in ("pdf", "jpg", "jpeg", "png"):
+        raise HTTPException(422, "NO_PAGE_IMAGE")
+    try:
+        source = raster(media_svc.storage.get_limited(asset["s3Key"], MAX_BYTES), asset["ext"], page)
+        output = io.BytesIO()
+        source.save(output, format="PNG")
+        return Response(output.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
+    except (ValueError, IndexError):
+        raise HTTPException(422, "INVALID_PAGE")
 
 
 @router.get("/api/media/{media_id}")

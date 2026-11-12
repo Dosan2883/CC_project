@@ -67,15 +67,22 @@ class TranslationService:
         if not record:
             raise HTTPException(404, "MESSAGE_NOT_FOUND")
         message = record.value
+        def verify():
+            self.rooms.require_member(room_id, user)
+            current = self.db.get("ROOM#" + room_id, f"MESSAGE#{seq:020d}")
+            if not current or current.version != record.version:
+                raise HTTPException(409, "SOURCE_VERSION_CHANGED")
         if message.get("media"):
             raise HTTPException(422, "NOT_TEXT_MESSAGE")
         text = message["bodyOriginal"]
         if len(text) > MAX_CHARS:
             raise HTTPException(422, "TEXT_TOO_LONG")
         if message.get("sourceLanguage") == target:  # 이미 같은 언어면 호출하지 않는다
+            verify()
             return {"translated": text, "target": target, "cached": False, "sameLanguage": True}
 
-        translated, cached = self.translate_text(text, target, user)
+        translated, cached = self.translate_text(text, target, user, verify)
+        verify()
         return {"translated": translated, "target": target, "cached": cached, "sameLanguage": False}
 
     def translate_page(self, media_id, page, target, user):
@@ -88,7 +95,8 @@ class TranslationService:
         except (MediaError, HTTPException):
             raise HTTPException(404, "MEDIA_NOT_FOUND")  # 방 밖 사용자에게는 파일의 존재도 알리지 않는다
         try:
-            pages = self.media.transcript(media_id)["pages"]
+            transcript = self.media.transcript(media_id)
+            pages = transcript["pages"]
         except MediaError as error:
             raise HTTPException(error.status, error.code)
         if not 1 <= page <= len(pages):
@@ -98,18 +106,31 @@ class TranslationService:
             raise HTTPException(422, "EMPTY_PAGE")
         if len(text) > MAX_PAGE_CHARS:
             raise HTTPException(422, "PAGE_TOO_LONG")
+        def checked(result):
+            verify()
+            return result
+        def verify():
+            try:
+                current_asset = self.media.asset(media_id)
+                self.rooms.require_member(current_asset["roomId"], user)
+                current = self.media.transcript(media_id)
+            except MediaError as error:
+                raise HTTPException(error.status, error.code)
+            if (current_asset.get("transcriptKey") != asset.get("transcriptKey") or
+                current.get("version", 1) != transcript.get("version", 1) or current.get("pages") != pages):
+                raise HTTPException(409, "SOURCE_VERSION_CHANGED")
 
         key, cached = self.cached(target, text)
         if cached:
-            return {"translated": cached, "target": target, "page": page, "cached": True}
+            return checked({"translated": cached, "target": target, "page": page, "cached": True})
         chunks = split_text(text)
         if len(chunks) == 1:
-            translated, was_cached = self.translate_text(text, target, user)
-            return {"translated": translated, "target": target, "page": page, "cached": was_cached}
+            translated, was_cached = self.translate_text(text, target, user, verify)
+            return checked({"translated": translated, "target": target, "page": page, "cached": was_cached})
         page_key = "TRANSLATION#" + key[:2]
         lease, saved = self.acquire(page_key, key)
         if saved is not None:
-            return {"translated": saved, "target": target, "page": page, "cached": True}
+            return checked({"translated": saved, "target": target, "page": page, "cached": True})
         reservation_ids = []
         try:
             chunk_records = [self.cached(target, chunk) for chunk in chunks]
@@ -118,6 +139,7 @@ class TranslationService:
             reservation_by_index = dict(zip(missing, reservation_ids))
             output = []
             for index, (chunk_key, value) in enumerate(chunk_records):
+                verify()
                 if value is None:
                     reservation_id = reservation_by_index[index]
                     chunk_pk = "TRANSLATION#" + chunk_key[:2]
@@ -128,6 +150,7 @@ class TranslationService:
                         self.mark_attempted(user, [reservation_id])
                         later = [reservation_by_index[i] for i in missing if i > index]
                         try:
+                            verify()
                             value = self.translator.translate(chunks[index], LANGUAGE_NAMES[target])
                             value = self.complete(chunk_pk, chunk_key, target, value, chunk_lease)
                         except Exception:
@@ -136,7 +159,8 @@ class TranslationService:
                             raise
                 output.append(value)
             translated = "\n\n".join(output)
-            return {"translated": self.complete(page_key, key, target, translated, lease), "target": target, "page": page, "cached": False}
+            verify()
+            return checked({"translated": self.complete(page_key, key, target, translated, lease), "target": target, "page": page, "cached": False})
         except Exception:
             self.release(user, reservation_ids)
             self.release_claim(page_key, key, lease)
@@ -199,19 +223,24 @@ class TranslationService:
             return value
         self.db.update(pk, key, release)
 
-    def translate_text(self, text, target, user):
+    def translate_text(self, text, target, user, verify=None):
+        verify = verify or (lambda: None)
         key, cached = self.cached(target, text)
         if cached:
+            verify()
             return cached, True
         pk = "TRANSLATION#" + key[:2]
         lease, saved = self.acquire(pk, key)
         if saved is not None:
+            verify()
             return saved, True
         reservation = None
         try:
+            verify()
             reservation = self.reserve(user, 1)[0]
             self.mark_attempted(user, [reservation])
             translated = self.translator.translate(text, LANGUAGE_NAMES[target])
+            verify()
             return self.complete(pk, key, target, translated, lease), False
         except Exception:
             if reservation:

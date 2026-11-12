@@ -93,8 +93,30 @@ def extract_docx(data: bytes, on_progress: Progress) -> dict:
 EXTRACTORS = {"txt": extract_txt, "pdf": extract_pdf, "docx": extract_docx}
 
 
-def extract(ext: str, data: bytes, on_progress: Progress) -> dict:
-    fn = EXTRACTORS.get(ext)
-    if not fn:
-        raise ExtractError("UNSUPPORTED_TYPE")
-    return fn(data, on_progress)
+def extract(ext: str, data: bytes, on_progress: Progress, language="auto") -> dict:
+    if ext in ("jpg", "jpeg", "png"):
+        result = {"pages": [""], "needsOcr": True}
+    else:
+        fn = EXTRACTORS.get(ext)
+        if not fn:
+            raise ExtractError("UNSUPPORTED_TYPE")
+        result = fn(data, on_progress)
+    if ext not in ("pdf", "jpg", "jpeg", "png"):
+        return result
+    from app.media.ocr import raster, recognize
+    details = []
+    for index, text in enumerate(result["pages"]):
+        detail = {"page": index + 1, "method": "text", "regions": [], "needsReview": False}
+        if not text.strip():
+            try:
+                detail.update(recognize(raster(data, ext, index + 1), language), method="ocr")
+                result["pages"][index] = detail.pop("text")
+            except ImportError:
+                detail.update(method="ocr", needsReview=True, error="OCR_NOT_INSTALLED")
+            except Exception:
+                detail.update(method="ocr", needsReview=True, error="OCR_FAILED")
+        details.append(detail)
+        on_progress(index + 1, len(result["pages"]))
+    result.update(pageDetails=details, version=1, originalPages=list(result["pages"]),
+                  needsOcr=any(not text.strip() for text in result["pages"]))
+    return result

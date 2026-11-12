@@ -36,11 +36,17 @@ class LambdaTranslator:
         return bool(self.url and self.secret)
 
     def translate(self, text, target_name):
+        return self.invoke(text, target_name, "translate")
+
+    def summarize(self, text, target_name):
+        return self.invoke(text, target_name, "summarize")
+
+    def invoke(self, text, target_name, action):
         if not self.configured:
             raise TranslationUnavailable("not configured")
         request = urllib.request.Request(
             self.url,
-            data=json.dumps({"text": text, "target": target_name}).encode(),
+            data=json.dumps({"text": text, "target": target_name, **({"action": action} if action != "translate" else {})}).encode(),
             headers={"Content-Type": "application/json", "x-api-secret": self.secret},
             method="POST",
         )
