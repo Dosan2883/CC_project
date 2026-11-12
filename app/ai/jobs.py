@@ -10,7 +10,25 @@ from fastapi import HTTPException
 from app.core.database import Change, Conflict
 from app.media.queue import MediaWorker
 from app.media.service import MediaError
+from app.ai.contract import MODEL_VERSION
 from app.ai.service import LANGUAGE_NAMES
+
+SUMMARY_CACHE_VERSION = "2"  # 요약 프롬프트나 방식을 크게 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
+
+
+SCRIPTS = {"kana": re.compile("[぀-ヿ]"), "hangul": re.compile("[가-힣]"), "han": re.compile("[一-鿿]")}
+
+
+def in_target_language(text, target):
+    """모델이 지시를 무시하고 입력 언어로 답한 경우를 걸러 낸다. 글자 종류로만 확인하므로 일본어·한국어·중국어만 검사한다."""
+    kana, hangul, han = (len(SCRIPTS[name].findall(text)) for name in ("kana", "hangul", "han"))
+    if target == "ja":
+        return kana > 0 and hangul <= kana
+    if target == "ko":
+        return hangul > 0
+    if target == "zh-CN":
+        return han > 0 and kana == 0 and hangul == 0
+    return True
 
 
 class AIJobs:
@@ -106,6 +124,22 @@ class AIJobs:
             result["result"] = json.loads(self.media.storage.get(job["resultKey"]))
         return result
 
+    def summary_cache_key(self, job):
+        """같은 방·종류·대상 언어·선택 자료(sourceHash)이면 같은 키. 선택한 자료가 바뀌면 키가 달라진다."""
+        raw = json.dumps([SUMMARY_CACHE_VERSION, MODEL_VERSION, job["roomId"], job["kind"], job["target"], job["sourceHash"]])
+        key = hashlib.sha256(raw.encode()).hexdigest()
+        return "AI_SUMMARY#" + key[:2], key
+
+    def cached_summary(self, job):
+        pk, key = self.summary_cache_key(job)
+        record = self.db.get(pk, key)
+        text = record.value.get("text") if record else None
+        return text if isinstance(text, str) and text.strip() else None
+
+    def remember_summary(self, job, text):
+        pk, key = self.summary_cache_key(job)
+        self.db.update(pk, key, lambda value: value if value and value.get("text") else {"text": text, "createdAt": int(time.time() * 1000)})
+
     def budget(self, job, text):
         now = time.time()
         # UTF-8 byte length is a conservative input token bound; reserve the full output limit.
@@ -143,14 +177,19 @@ class AIJobs:
         try:
             self.get(job_id, job["requester"])
             text = "\n\n".join(f'[{e["id"]}] {e["text"]}' for e in job["evidence"])
-            self.budget(job, text)
-            if job["kind"] == "translate":
-                output, _ = self.translation.translate_text(text, job["target"], job["requester"])
-            else:
-                output = self.translation.translator.summarize(text, LANGUAGE_NAMES[job["target"]])
-                citations = set(int(number) for number in re.findall(r"\[(\d+)\]", output))
-                if not citations or not citations.issubset({e["id"] for e in job["evidence"]}):
-                    raise ValueError("summary has invalid evidence references")
+            output = self.cached_summary(job) if job["kind"] != "translate" else None
+            if output is None:  # 캐시가 있으면 한도 차감과 Lambda 호출을 모두 건너뛴다
+                self.budget(job, text)
+                if job["kind"] == "translate":
+                    output, _ = self.translation.translate_text(text, job["target"], job["requester"])
+                else:
+                    output = self.translation.translator.summarize(text, LANGUAGE_NAMES[job["target"]])
+                    if not in_target_language(output, job["target"]):
+                        raise ValueError("summary is not in the target language")
+                    citations = set(int(number) for number in re.findall(r"\[(\d+)\]", output))
+                    if not citations or not citations.issubset({e["id"] for e in job["evidence"]}):
+                        raise ValueError("summary has invalid evidence references")
+                    self.remember_summary(job, output)  # 근거 번호 검사를 통과한 요약만 저장한다
             self.get(job_id, job["requester"])
             key = f"ai/results/{job_id}/{lease}.json"
             self.media.storage.put(key, json.dumps({"text": output, "evidence": job["evidence"], "sourceHash": job["sourceHash"]}, ensure_ascii=False).encode())

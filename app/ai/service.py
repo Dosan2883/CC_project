@@ -81,7 +81,7 @@ class TranslationService:
             verify()
             return {"translated": text, "target": target, "cached": False, "sameLanguage": True}
 
-        translated, cached = self.translate_text(text, target, user, verify)
+        translated, cached = self.translate_text(text, target, user, verify, self.source_language(message.get("sourceLanguage")))
         verify()
         return {"translated": translated, "target": target, "cached": cached, "sameLanguage": False}
 
@@ -106,6 +106,9 @@ class TranslationService:
             raise HTTPException(422, "EMPTY_PAGE")
         if len(text) > MAX_PAGE_CHARS:
             raise HTTPException(422, "PAGE_TOO_LONG")
+        detail = transcript.get("pageDetails") or []
+        detail = detail[page - 1] if len(detail) >= page and isinstance(detail[page - 1], dict) else {}
+        source = self.source_language((transcript.get("corrections") or {}).get(str(page), {}).get("language") or detail.get("language"))
         def checked(result):
             verify()
             return result
@@ -120,12 +123,12 @@ class TranslationService:
                 current.get("version", 1) != transcript.get("version", 1) or current.get("pages") != pages):
                 raise HTTPException(409, "SOURCE_VERSION_CHANGED")
 
-        key, cached = self.cached(target, text)
+        key, cached = self.cached(target, text, source)
         if cached:
             return checked({"translated": cached, "target": target, "page": page, "cached": True})
         chunks = split_text(text)
         if len(chunks) == 1:
-            translated, was_cached = self.translate_text(text, target, user, verify)
+            translated, was_cached = self.translate_text(text, target, user, verify, source)
             return checked({"translated": translated, "target": target, "page": page, "cached": was_cached})
         page_key = "TRANSLATION#" + key[:2]
         lease, saved = self.acquire(page_key, key)
@@ -133,7 +136,7 @@ class TranslationService:
             return checked({"translated": saved, "target": target, "page": page, "cached": True})
         reservation_ids = []
         try:
-            chunk_records = [self.cached(target, chunk) for chunk in chunks]
+            chunk_records = [self.cached(target, chunk, source) for chunk in chunks]
             missing = [index for index, (_, value) in enumerate(chunk_records) if value is None]
             reservation_ids = self.reserve(user, len(missing)) if missing else []
             reservation_by_index = dict(zip(missing, reservation_ids))
@@ -151,7 +154,7 @@ class TranslationService:
                         later = [reservation_by_index[i] for i in missing if i > index]
                         try:
                             verify()
-                            value = self.translator.translate(chunks[index], LANGUAGE_NAMES[target])
+                            value = self.call_translator(chunks[index], target, source)
                             value = self.complete(chunk_pk, chunk_key, target, value, chunk_lease)
                         except Exception:
                             self.release(user, later)
@@ -167,11 +170,24 @@ class TranslationService:
             raise
 
     @staticmethod
-    def cache_key(target, text):
-        return hashlib.sha256(f"{MODEL_VERSION}\n{target}\n{text}".encode()).hexdigest()
+    def source_language(code):
+        """원문 언어 코드. 모르거나 지원하지 않는 값이면 None(= 전체 번역)."""
+        return code if code in LANGUAGE_NAMES else None
 
-    def cached(self, target, text):
-        key = self.cache_key(target, text)
+    def call_translator(self, text, target, source=None):
+        # 원문 언어를 아는 경우에만 Lambda에 알려, 그 언어 부분만 번역하게 한다.
+        if source:
+            return self.translator.translate(text, LANGUAGE_NAMES[target], LANGUAGE_NAMES[source])
+        return self.translator.translate(text, LANGUAGE_NAMES[target])
+
+    @staticmethod
+    def cache_key(target, text, source=None):
+        # source가 없으면 예전 캐시 키와 같다.
+        suffix = f"\nsource:{source}" if source else ""
+        return hashlib.sha256(f"{MODEL_VERSION}\n{target}\n{text}{suffix}".encode()).hexdigest()
+
+    def cached(self, target, text, source=None):
+        key = self.cache_key(target, text, source)
         record = self.db.get("TRANSLATION#" + key[:2], key)
         value = record.value if record else None
         # 이전 번역 캐시에는 state 필드가 없었다. translated가 있으면 완료로 간주한다.
@@ -223,9 +239,9 @@ class TranslationService:
             return value
         self.db.update(pk, key, release)
 
-    def translate_text(self, text, target, user, verify=None):
+    def translate_text(self, text, target, user, verify=None, source=None):
         verify = verify or (lambda: None)
-        key, cached = self.cached(target, text)
+        key, cached = self.cached(target, text, source)
         if cached:
             verify()
             return cached, True
@@ -239,7 +255,7 @@ class TranslationService:
             verify()
             reservation = self.reserve(user, 1)[0]
             self.mark_attempted(user, [reservation])
-            translated = self.translator.translate(text, LANGUAGE_NAMES[target])
+            translated = self.call_translator(text, target, source)
             verify()
             return self.complete(pk, key, target, translated, lease), False
         except Exception:
