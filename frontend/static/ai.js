@@ -1,5 +1,36 @@
 /* Selected server-side sources only; no browser-supplied source text. */
 const aiSelections = new Map();
+/* 요약·번역 근거 원문을 보여 주고, 가능한 항목은 대상 언어로 번역해 바꿔 보여 준다. */
+function evidenceLabel(e) {
+  return e.source.kind === "message" ? `메시지 #${e.source.messageSeq} · ${new Date(e.sentAt).toLocaleString()}`
+    : e.source.kind === "page" ? `파일 ${e.source.mediaId}, ${e.source.page}쪽` : `녹취 ${e.source.start}–${e.source.end}초`;
+}
+async function translateEvidence(e, target) {
+  const partial = e.source.startChar > 0 || e.source.endChar != null;  // 일부 선택이면 서버 번역(전체 대상)과 범위가 달라 번역하지 않는다
+  if (partial) return null;
+  if (e.source.kind === "message")
+    return (await api("/api/ai/translate", "POST", {roomId: currentRoom.roomId, messageSeq: e.source.messageSeq, target})).translated;
+  if (e.source.kind === "page")
+    return (await api("/api/ai/translate-page", "POST", {mediaId: e.source.mediaId, page: e.source.page, target})).translated;
+  return null;
+}
+function showEvidence(box, evidence, target, active) {
+  box.textContent = "";
+  const head = document.createElement("p"); head.textContent = "선택한 원문 근거:"; box.append(head);
+  for (const e of evidence) {
+    const item = document.createElement("pre"); item.style.whiteSpace = "pre-wrap";
+    item.textContent = `[${e.id}] ${evidenceLabel(e)}\n${e.text}`;
+    box.append(item);
+    translateEvidence(e, target).then(translated => {
+      if (translated && translated.trim() !== e.text.trim() && active())
+        item.textContent = `[${e.id}] ${evidenceLabel(e)}\n${translated}\n\n(원문)\n${e.text}`;
+      else if (translated && active()) item.textContent += "\n\n(번역 결과가 원문과 같습니다)";
+      else if (!translated && active()) item.textContent += "\n\n(이 근거는 번역하지 않습니다: 일부 구간 선택 또는 녹취)";
+    }).catch(error => {  // 번역에 실패하면 원문을 그대로 두고 이유를 표시한다
+      if (active()) item.textContent += `\n\n(번역 실패: ${error.code || error.status || error.message})`;
+    });
+  }
+}
 async function runAi(sources, kind = "summarize") {
   if (!currentRoom || !sources.length) return toast("메시지 또는 문단을 먼저 선택하세요.");
   if (!hasTranslateConsent()) {
@@ -10,7 +41,8 @@ async function runAi(sources, kind = "summarize") {
   const dialog = document.createElement("dialog"), state = document.createElement("p"), output = document.createElement("pre");
   output.style.whiteSpace = "pre-wrap";
   const close = document.createElement("button"); close.textContent = "닫기"; close.onclick = () => { dialog.close(); dialog.remove(); };
-  dialog.append(state, output, close); document.body.append(dialog); dialog.showModal();
+  const evidenceBox = document.createElement("div");
+  dialog.append(state, output, evidenceBox, close); document.body.append(dialog); dialog.showModal();
   let jobId;
   const active = () => dialog.open && currentRoom?.roomId === roomId && generation === viewGeneration && token === authToken;
   async function poll() {
@@ -19,8 +51,8 @@ async function runAi(sources, kind = "summarize") {
       if (!active()) return;
       state.textContent = `${job.status} · 시도 ${job.attempts}/3`;
       if (job.status === "COMPLETED") {
-        output.textContent = job.result.text + "\n\n선택한 원문 근거:\n" + job.result.evidence.map(e =>
-          `[${e.id}] ${e.source.kind === "message" ? `메시지 #${e.source.messageSeq} · ${new Date(e.sentAt).toLocaleString()}` : e.source.kind === "page" ? `파일 ${e.source.mediaId}, ${e.source.page}쪽` : `녹취 ${e.source.start}–${e.source.end}초`}\n${e.text}`).join("\n\n");
+        output.textContent = job.result.text;
+        showEvidence(evidenceBox, job.result.evidence, job.target, active);
         return;
       }
       if (job.status === "FAILED") {

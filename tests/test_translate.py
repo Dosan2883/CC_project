@@ -27,8 +27,9 @@ class FakeTranslator:
         self.fail = False
         self.calls = []
 
-    def translate(self, text, target_name):
+    def translate(self, text, target_name, source_name=None):
         self.calls.append((text, target_name))
+        self.sources = getattr(self, "sources", []) + [source_name]
         if self.fail:
             raise TranslationUnavailable("boom")
         return f"[{target_name}] {text}"

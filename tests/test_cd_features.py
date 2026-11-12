@@ -27,7 +27,7 @@ class Model:
         self.calls += 1
         if self.fail:
             raise RuntimeError("transient")
-        return "Decision [1]"
+        return "결정 [1]" if language == "Korean" else "Decision [1]"
 
 
 class FeatureChecks(unittest.TestCase):
@@ -54,6 +54,29 @@ class FeatureChecks(unittest.TestCase):
         self.assertEqual(self.model.calls, 1)
         with self.assertRaises(HTTPException):
             self.jobs.get(job["jobId"], "outsider")
+
+    def test_summary_cache_reuses_until_selected_messages_change(self):
+        first = self.jobs.submit(self.body, "owner")
+        self.assertTrue(self.jobs.work(first["jobId"]))
+        second = self.jobs.submit(self.body, "owner")
+        self.assertTrue(self.jobs.work(second["jobId"]))
+        self.assertEqual(self.jobs.get(second["jobId"], "owner")["result"]["text"], "결정 [1]")
+        self.assertEqual(self.model.calls, 1)  # 같은 선택이면 두 번째는 Lambda를 부르지 않는다
+        MessageStore(self.db, self.rooms).append("r", "owner", "ship on Monday", "en")
+        changed = {**self.body, "sources": [{"kind": "message", "messageSeq": 2, "startChar": 0}]}
+        third = self.jobs.submit(changed, "owner")
+        self.assertTrue(self.jobs.work(third["jobId"]))
+        self.assertEqual(self.model.calls, 2)  # 선택한 자료가 달라지면 다시 요약한다
+        other = self.jobs.submit({**self.body, "target": "en"}, "owner")
+        self.assertTrue(self.jobs.work(other["jobId"]))
+        self.assertEqual(self.model.calls, 3)  # 대상 언어가 다르면 별도 요약
+
+    def test_summary_in_wrong_language_is_rejected_and_not_cached(self):
+        self.model.summarize = lambda text, language: "결정 [1]"  # 일본어를 요청했는데 한국어로 답한 경우
+        job = self.jobs.submit({**self.body, "target": "ja"}, "owner")
+        self.jobs.work(job["jobId"])
+        self.assertEqual(self.db.get("AI_JOBS", job["jobId"]).value["status"], "PENDING")
+        self.assertIsNone(self.jobs.cached_summary({**self.db.get("AI_JOBS", job["jobId"]).value}))
 
     def test_failure_backoff_and_dead_letter(self):
         self.model.fail = True
