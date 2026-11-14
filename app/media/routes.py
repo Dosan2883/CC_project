@@ -11,19 +11,23 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.auth.dependencies import current_user
 from app.core.runtime import manager, media_svc, store, room_repo
+from app.core.runtime import secret as signing_secret
+from app.media import playback
 from app.media.schemas import UploadRequest
-from app.media.service import MAX_BYTES, MediaError
+from app.media.service import MAX_BYTES, MediaError, max_bytes_for
 from app.rooms.service import require_member
 
 router = APIRouter()
 
 
-def media_member(media_id: str, user: str) -> dict:
-    """미디어가 속한 방의 멤버인지 확인한다. 방 밖 사용자는 존재 여부도 알 수 없게 404로 답한다."""
+def media_member(media_id: str, user: str, allow_deleted: bool = False) -> dict:
+    """미디어가 속한 방의 멤버인지 확인한다. 방 밖 사용자는 존재 여부도 알 수 없게 404로 답한다. 삭제된 파일은 없는 파일로 본다."""
     try:
         asset = media_svc.asset(media_id)
     except MediaError as e:
         raise HTTPException(e.status, e.code)
+    if not allow_deleted and media_svc.is_deleted(asset):
+        raise HTTPException(404, "MEDIA_NOT_FOUND")
     try:
         room_repo.require_member(asset["roomId"], user)
     except HTTPException:
@@ -55,8 +59,8 @@ async def upload_file(media_id: str, token: str, request: Request):
     """로컬 데모에서만 쓰는 업로드 수신부. AWS에서는 클라이언트가 S3로 직접 올리므로 사라진다.
     로그인 토큰이 아니라 upload-url에서 받은 1회용 토큰으로 권한을 확인한다(S3 Presigned URL과 같은 방식)."""
     try:
-        await asyncio.to_thread(media_svc.check_token, media_id, token)
-        data = await read_limited(request, MAX_BYTES)
+        asset = await asyncio.to_thread(media_svc.check_token, media_id, token)
+        data = await read_limited(request, max_bytes_for(asset["ext"]))
         asset = await asyncio.to_thread(media_svc.receive_upload, media_id, token, data)
     except MediaError as e:
         raise HTTPException(e.status, e.code)
@@ -146,10 +150,61 @@ def page_image(media_id: str, page: int, user: str = Depends(current_user)):
         raise HTTPException(422, "INVALID_PAGE")
 
 
+@router.get("/api/media/{media_id}/play-url")
+def play_url(media_id: str, user: str = Depends(current_user)):
+    """음성·영상 재생 주소. <audio>는 로그인 토큰을 실을 수 없어 한 파일에만 유효한 임시 토큰을 붙인다."""
+    asset = media_member(media_id, user)
+    if asset["ext"] not in playback.CONTENT_TYPES:
+        raise HTTPException(422, "NOT_PLAYABLE")
+    if hasattr(media_svc.storage, "download_url"):  # S3 모드: 서버를 거치지 않고 S3가 직접 보낸다
+        return {"url": media_svc.storage.download_url(asset["s3Key"], playback.PLAY_TTL, playback.CONTENT_TYPES[asset["ext"]])}
+    return {"url": f"/api/media/{media_id}/stream?token={playback.make_token(signing_secret, media_id, user)}"}
+
+
+@router.get("/api/media/{media_id}/stream")
+def stream_media(media_id: str, token: str, request: Request):
+    user = playback.read_token(signing_secret, token, media_id)
+    if not user:
+        raise HTTPException(401, "INVALID_PLAY_TOKEN")
+    asset = media_member(media_id, user)  # 토큰을 받은 뒤 방에서 나갔거나 파일이 삭제됐으면 거부한다
+    key = asset["s3Key"]
+    try:
+        size = media_svc.storage.size(key)
+    except FileNotFoundError:
+        raise HTTPException(404, "MEDIA_NOT_FOUND")
+    header = request.headers.get("range")
+    span = playback.parse_range(header, size)
+    if span is None:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    start, end = span
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store"}
+    if header:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return Response(media_svc.storage.read_range(key, start, end), status_code=206 if header else 200,
+                    media_type=playback.CONTENT_TYPES.get(asset["ext"], "application/octet-stream"), headers=headers)
+
+
+@router.get("/api/rooms/{room_id}/files")
+def room_files(room_id: str, user: str = Depends(current_user)):
+    room_repo.require_member(room_id, user)
+    return media_svc.list_room_files(room_id)
+
+
 @router.get("/api/media/{media_id}")
 def media_status(media_id: str, user: str = Depends(current_user)):
-    media_member(media_id, user)
+    asset = media_member(media_id, user, allow_deleted=True)
+    if media_svc.is_deleted(asset):  # 채팅의 파일 카드가 삭제된 파일로 표시할 수 있게 상태만 알려 준다
+        return {"mediaId": media_id, "filename": asset["filename"], "kind": asset["type"], "size": asset["size"], "status": "DELETED",
+                "progress": 100, "errorCode": None, "needsOcr": False, "pageCount": 0, "retryCount": 0}
     return media_svc.status(media_id)
+
+
+@router.delete("/api/files/{media_id}")
+def delete_file(media_id: str, user: str = Depends(current_user)):
+    try:
+        return media_svc.delete_file(media_id, user)
+    except MediaError as e:
+        raise HTTPException(e.status, e.code)
 
 
 @router.get("/api/media/{media_id}/transcript")

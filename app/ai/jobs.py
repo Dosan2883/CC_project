@@ -13,6 +13,8 @@ from app.media.service import MediaError
 from app.ai.contract import MODEL_VERSION
 from app.ai.service import LANGUAGE_NAMES
 
+SUMMARY_KINDS = ("summarize", "meeting-summary")
+MAX_TITLE = 60
 SUMMARY_CACHE_VERSION = "2"  # 요약 프롬프트나 방식을 크게 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
 
 
@@ -50,7 +52,7 @@ class AIJobs:
                 item = {"text": record.value["bodyOriginal"], "sentAt": record.value["sentAt"], "source": source}
             else:
                 try:
-                    asset = self.media.asset(source["mediaId"])
+                    asset = self.media.live_asset(source["mediaId"])
                 except MediaError:
                     raise HTTPException(404, "MEDIA_NOT_FOUND")
                 if asset["roomId"] != room:
@@ -69,6 +71,10 @@ class AIJobs:
                     if not segments:
                         raise HTTPException(422, "NO_TRANSCRIPT_SEGMENTS")
                     text = "\n".join(f'[{s["start"]}-{s["end"]}] {s["text"]}' for s in segments)
+                elif kind == "transcript":  # 음성 전체. 구간 시각 없이 이어 붙여 하나의 근거[1]로 요약한다
+                    text = " ".join(s["text"].strip() for s in transcript.get("segments", []) if s["text"].strip())
+                    if not text:
+                        raise HTTPException(422, "NO_TRANSCRIPT_SEGMENTS")
                 else:
                     raise HTTPException(422, "INVALID_SOURCE")
                 item = {"text": text, "source": source, "version": transcript.get("version", 1)}
@@ -94,6 +100,9 @@ class AIJobs:
         evidence = self.select(body["roomId"], body["sources"], user)
         if body["target"] not in LANGUAGE_NAMES or body["sourceLanguage"] not in (*LANGUAGE_NAMES, "auto", "und"):
             raise HTTPException(422, "INVALID_LANGUAGE")
+        existing = self.existing_summary(body, evidence)
+        if existing:  # 같은 선택·종류·대상 언어의 요약이 이미 있으면 새 작업도 새 목록 항목도 만들지 않는다
+            return existing
         if not self.translation.translator.configured:
             raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
         job_id = uuid.uuid4().hex
@@ -139,6 +148,87 @@ class AIJobs:
     def remember_summary(self, job, text):
         pk, key = self.summary_cache_key(job)
         self.db.update(pk, key, lambda value: value if value and value.get("text") else {"text": text, "createdAt": int(time.time() * 1000)})
+
+    @staticmethod
+    def clean_title(title):
+        """사용자가 정한 요약 이름. 공백을 정리하고 길이를 제한한다. 비면 None."""
+        title = " ".join(str(title or "").split())[:MAX_TITLE]
+        return title or None
+
+    @staticmethod
+    def index_partition(room_id):
+        return "ROOM_SUMMARIES#" + room_id
+
+    def record_summary(self, job, result_key):
+        """방별 요약 목록에 항목을 올린다. 같은 선택(같은 키)의 요약은 한 항목으로 합치고, 이름은 새로 정했을 때만 바꾼다."""
+        _, entry_id = self.summary_cache_key(job)
+        now = int(time.time() * 1000)
+        first = " ".join(job["evidence"][0]["text"].split())
+        default_title = first[:30] + ("…" if len(first) > 30 else "")
+        def upsert(value):
+            value = value or {}
+            return {"entryId": entry_id, "roomId": job["roomId"], "kind": job["kind"], "target": job["target"],
+                    "requester": value.get("requester", job["requester"]), "createdAt": value.get("createdAt", now), "updatedAt": now,
+                    "title": self.clean_title(job.get("title")) or value.get("title") or default_title,
+                    "count": len(job["evidence"]), "resultKey": result_key, "jobId": job["jobId"]}
+        self.db.update(self.index_partition(job["roomId"]), entry_id, upsert)
+        return entry_id
+
+    def existing_summary(self, body, evidence):
+        if body["kind"] not in SUMMARY_KINDS:
+            return None
+        probe = {"roomId": body["roomId"], "kind": body["kind"], "target": body["target"], "sourceHash": self.digest(evidence)}
+        _, entry_id = self.summary_cache_key(probe)
+        record = self.db.get(self.index_partition(body["roomId"]), entry_id)
+        if not record:
+            return None
+        return {"existing": True, "entryId": entry_id, "roomId": body["roomId"], "title": record.value["title"]}
+
+    def list_summaries(self, room_id, user):
+        self.rooms.require_member(room_id, user)
+        entries = [{k: v for k, v in record.value.items() if k != "resultKey"} for record in self.db.query(self.index_partition(room_id))]
+        return sorted(entries, key=lambda entry: entry["updatedAt"], reverse=True)
+
+    def read_summary(self, room_id, entry_id, user):
+        self.rooms.require_member(room_id, user)
+        record = self.db.get(self.index_partition(room_id), entry_id)
+        if not record:
+            raise HTTPException(404, "SUMMARY_NOT_FOUND")
+        entry = {k: v for k, v in record.value.items() if k != "resultKey"}
+        entry["result"] = json.loads(self.media.storage.get(record.value["resultKey"]))
+        return entry
+
+    def rename_summary(self, room_id, entry_id, title, user):
+        self.rooms.require_member(room_id, user)
+        title = self.clean_title(title)
+        if not title:
+            raise HTTPException(422, "TITLE_REQUIRED")
+        def rename(value):
+            if not value:
+                raise HTTPException(404, "SUMMARY_NOT_FOUND")
+            if value["requester"] != user:
+                raise HTTPException(403, "NOT_SUMMARY_OWNER")
+            return {**value, "title": title}
+        self.db.update(self.index_partition(room_id), entry_id, rename)
+        return {"entryId": entry_id, "title": title}
+
+    def delete_summary(self, room_id, entry_id, user):
+        """목록에서 요약을 지운다. 만든 사람만 지울 수 있고, 같은 선택을 다시 요약하면 새로 만들어진다(캐시도 함께 지움)."""
+        self.rooms.require_member(room_id, user)
+        record = self.db.get(self.index_partition(room_id), entry_id)
+        if not record:
+            raise HTTPException(404, "SUMMARY_NOT_FOUND")
+        if record.value["requester"] != user:
+            raise HTTPException(403, "NOT_SUMMARY_OWNER")
+        changes = [Change(record.pk, record.sk, record.version, None)]
+        cached = self.db.get("AI_SUMMARY#" + entry_id[:2], entry_id)
+        if cached:
+            changes.append(Change(cached.pk, cached.sk, cached.version, None))
+        try:
+            self.db.commit(changes)
+        except Conflict:
+            raise HTTPException(409, "SUMMARY_CHANGED")
+        return {"entryId": entry_id, "deleted": True}
 
     def budget(self, job, text):
         now = time.time()
@@ -193,7 +283,10 @@ class AIJobs:
             self.get(job_id, job["requester"])
             key = f"ai/results/{job_id}/{lease}.json"
             self.media.storage.put(key, json.dumps({"text": output, "evidence": job["evidence"], "sourceHash": job["sourceHash"]}, ensure_ascii=False).encode())
-            self.finish(job_id, lease, {"status": "COMPLETED", "resultKey": key, "leaseUntil": 0})
+            changes = {"status": "COMPLETED", "resultKey": key, "leaseUntil": 0}
+            if job["kind"] in SUMMARY_KINDS:
+                changes["entryId"] = self.record_summary(job, key)
+            self.finish(job_id, lease, changes)
             return True
         except Exception as error:
             terminal = isinstance(error, HTTPException) and error.status_code in (403, 404, 409, 422)

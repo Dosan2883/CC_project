@@ -29,6 +29,7 @@ class TranslationRechecks(unittest.TestCase):
     def test_page_changed_during_translation_is_not_returned(self):
         media = Mock()
         media.asset.return_value = {"roomId":"r", "transcriptKey":"one"}
+        media.live_asset.return_value = media.asset.return_value  # 삭제되지 않은 파일만 돌려주는 조회
         source = {"pages":["original"], "version":1}
         media.transcript.side_effect = lambda _: dict(source)
         translator = Mock()

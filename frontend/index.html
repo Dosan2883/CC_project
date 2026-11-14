@@ -35,7 +35,7 @@
 
 <div id="app">
   <aside>
-    <div class="brand"><div class="mark">A</div><strong id="title"></strong></div>
+    <div class="brand"><div class="mark">A</div><strong id="title"></strong><button type="button" id="sideFold" class="ghost fold-btn">◀</button></div>
     <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
     <details id="preferencesPanel">
       <summary data-i="languageSettings"></summary>
@@ -76,6 +76,7 @@
   </aside>
 
   <main>
+    <button type="button" id="sideOpen" class="ghost fold-btn side-open" hidden>▶</button>
     <div id="empty" class="empty-state">
       <div class="mark">💬</div>
       <strong data-i="pickTitle"></strong>
@@ -102,10 +103,10 @@
           <div id="attachMenu">
             <button type="button" id="attImageBtn" data-i="attImage"></button>
             <button type="button" id="attDocBtn" data-i="attDoc"></button>
-            <button type="button" class="soon" data-i="attAudio"></button>
-            <button type="button" class="soon" data-i="attVideo"></button>
+            <button type="button" id="attAudioBtn" data-i="attAudio"></button>
+            <button type="button" id="attVideoBtn" data-i="attVideo"></button>
           </div>
-          <input type="file" id="fileInput" hidden accept=".pdf,.docx,.txt,.jpg,.jpeg,.png">
+          <input type="file" id="fileInput" hidden accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.mp3,.m4a,.wav,.ogg,.flac,.mp4,.webm">
         </div>
         <select id="srcLang"></select>
         <input type="text" id="body" autocomplete="off">
@@ -113,6 +114,21 @@
       </form>
     </section>
   </main>
+
+  <div id="docPanel" hidden>
+    <div class="doc-rail">
+      <button type="button" id="docFold" class="ghost fold-btn">◀</button>
+      <button type="button" id="fileToggle" class="ghost fold-btn">📄</button>
+      <button type="button" id="sumToggle" class="ghost fold-btn">📝</button>
+    </div>
+    <div class="doc-main">
+      <div class="doc-head"><strong id="docTitle"></strong></div>
+      <div id="docHint" class="hint"></div>
+      <div id="docBody"></div>
+      <div id="fileView" hidden></div>
+      <div id="sumView" hidden></div>
+    </div>
+  </div>
 </div>
 
 <div id="toast" role="status"></div>
@@ -123,6 +139,7 @@
 <script defer src="/static/rooms/index.js"></script>
 <script defer src="/static/chat/index.js"></script>
 <script defer src="/static/shared/feedback.js"></script>
+<script defer src="/static/shared/panels.js"></script>
 <script defer src="/static/media/index.js"></script>
 <script defer src="/static/ai.js"></script>
 <script defer src="/static/users/preferences.js"></script>

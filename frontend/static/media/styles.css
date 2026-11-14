@@ -17,4 +17,19 @@
   .file-text { max-height:260px; overflow:auto; background:var(--bubble); border-radius:10px; padding:8px 10px; font-size:13px; }
   .file-text h4 { margin:8px 0 2px; font-size:11px; color:var(--muted); }
   .file-text h4:first-child { margin-top:0; }
+  .audio-view { display:grid; gap:10px; }
+  .audio-player { width:100%; }
+  .audio-bar { display:flex; align-items:center; gap:8px; justify-content:space-between; color:var(--muted); }
+  .audio-actions { display:flex; gap:6px; flex:none; }
+  .audio-retry { font-size:12px; padding:3px 10px; border-radius:999px; }
+  .seg-list { display:grid; gap:6px; }
+  .seg-row { display:grid; gap:3px; padding:8px 10px; border-radius:12px; border:1px solid var(--line); background:var(--panel); cursor:pointer; transition:background .15s, box-shadow .15s; }
+  .seg-row:hover { background:var(--bubble); }
+  .seg-row.playing { background:var(--accent-soft); border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft), 0 0 12px var(--accent); }
+  .seg-head { display:flex; align-items:center; gap:8px; }
+  .seg-time { flex:1; font-size:11px; color:var(--muted); }
+  .seg-head button { font-size:11px; padding:1px 8px; border-radius:999px; }
+  .seg-text { overflow-wrap:anywhere; }
+  .seg-translated { color:var(--accent); overflow-wrap:anywhere; }
+  .seg-translated:empty { display:none; }
   .file-text pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }

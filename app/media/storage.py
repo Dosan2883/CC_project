@@ -49,6 +49,12 @@ class LocalStorage:
         with self._path(key).open("rb") as stream:
             return stream.read(limit + 1)
 
+    def read_range(self, key, start, end):
+        """start부터 end(포함)까지 읽는다. 큰 파일 전체를 올리지 않고 재생바 이동에 쓴다."""
+        with self._path(key).open("rb") as stream:
+            stream.seek(start)
+            return stream.read(end - start + 1)
+
 
 class S3Storage:
     """브라우저 직접 업로드는 덮어쓰기를 막는 조건부 PUT으로 서명한다."""
@@ -70,6 +76,11 @@ class S3Storage:
         with response["Body"] as body:
             return body.read(limit + 1)
 
+    def read_range(self, key, start, end):
+        response = self.client.get_object(Bucket=self.bucket, Key=key, Range=f"bytes={start}-{end}")
+        with response["Body"] as body:
+            return body.read()
+
     def size(self, key):
         from botocore.exceptions import ClientError
         try:
@@ -78,6 +89,13 @@ class S3Storage:
             if error.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
                 raise FileNotFoundError(key) from error
             raise
+
+    def download_url(self, key, ttl, content_type=None):
+        """재생·내려받기용 임시 주소. S3가 파일과 재생바 이동(Range)을 직접 처리해서 앱 서버가 중계하지 않는다."""
+        params = {"Bucket": self.bucket, "Key": key}
+        if content_type:
+            params["ResponseContentType"] = content_type
+        return self.client.generate_presigned_url("get_object", Params=params, ExpiresIn=ttl)
 
     def upload_url(self, key, size, ttl):
         params = {"Bucket": self.bucket, "Key": key, "ContentLength": size, "ContentType": "application/octet-stream", "IfNoneMatch": "*"}

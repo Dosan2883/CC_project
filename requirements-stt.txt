@@ -1,0 +1,5 @@
+# 음성·영상 인식(Whisper)이 필요한 서버에만 설치한다. 정식 Python 3.11/3.12 권장.
+# 영상의 소리는 faster-whisper가 PyAV로 직접 읽으므로 ffmpeg를 따로 설치하지 않아도 된다.
+faster-whisper>=1.0,<2
+# PyAV 19부터 av.open의 metadata_errors 인자가 없어져서 faster-whisper 1.2.x가 오류를 낸다. 19 미만으로 고정한다.
+av>=14,<19

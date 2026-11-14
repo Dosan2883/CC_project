@@ -1,6 +1,15 @@
 /* ---------- 모바일: 목록 ↔ 채팅 전환 ---------- */
   @media (max-width:720px) {
     #app { grid-template-columns:minmax(0,1fr); }
+    #app > aside, #app > main { grid-column:1; }
+    #app.doc-open, #app.doc-folded { --doc-w:0px; }
+    #app.side-collapsed:not(.in-room) > aside { display:flex; }
+    #sideFold, .side-open { display:none; }
+    #app.side-collapsed .chat-head { padding-left:12px; }
+    #docPanel { position:fixed; inset:0; z-index:20; grid-column:auto; border-left:0; }
+    #docPanel[data-state="folded"] { inset:auto 6px 90px auto; background:transparent; border:0; }
+    #docPanel[data-state="folded"] .doc-rail { padding:0; width:auto; }
+    #docPanel[data-state="folded"] .fold-btn { background:var(--panel); box-shadow:var(--shadow); }
     #app:not(.in-room) main { display:none; }
     #app.in-room aside { display:none; }
     #back { display:inline-block; padding:6px 10px; }

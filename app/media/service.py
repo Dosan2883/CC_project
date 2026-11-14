@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import secrets
 import threading
@@ -16,8 +17,15 @@ from app.media.queue import MediaWorker
 from app.rooms.repository import retry_conflicts
 
 log = logging.getLogger(__name__)
-ALLOWED_EXT = {"pdf": "document", "docx": "document", "txt": "document", "jpg": "image", "jpeg": "image", "png": "image"}
+ALLOWED_EXT = {"pdf": "document", "docx": "document", "txt": "document", "jpg": "image", "jpeg": "image", "png": "image",
+               "mp3": "audio", "m4a": "audio", "wav": "audio", "ogg": "audio", "flac": "audio", "mp4": "video", "webm": "video"}
 MAX_BYTES = 20 * 1024 * 1024
+# 음성·영상은 문서보다 커서 종류별로 따로 제한한다. 서버 메모리가 작아 한 번에 메모리에 올리는 크기를 넘기지 않는다.
+MAX_BYTES_BY_TYPE = {"audio": int(os.getenv("MAX_AUDIO_MB", "30")) * 1024 * 1024, "video": int(os.getenv("MAX_VIDEO_MB", "60")) * 1024 * 1024}
+
+
+def max_bytes_for(ext):
+    return MAX_BYTES_BY_TYPE.get(ALLOWED_EXT.get(ext), MAX_BYTES)
 UPLOAD_TTL = 300
 MAX_RETRIES = 3
 
@@ -54,6 +62,18 @@ def looks_valid(ext: str, data: bytes) -> bool:
             return True
         except Exception:
             return False
+    if ext == "mp3":  # 태그(ID3) 또는 프레임 동기 신호
+        return data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
+    if ext == "wav":
+        return data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+    if ext in ("m4a", "mp4"):
+        return data[4:8] == b"ftyp"
+    if ext == "ogg":
+        return data[:4] == b"OggS"
+    if ext == "flac":
+        return data[:4] == b"fLaC"
+    if ext == "webm":
+        return data[:4] == b"\x1a\x45\xdf\xa3"
     return True
 
 
@@ -73,6 +93,27 @@ class MediaService:
             raise MediaError(404, "MEDIA_NOT_FOUND")
         return record.value
 
+    def is_deleted(self, asset):
+        # 삭제 표시는 자산 기록과 따로 둔다. 처리 워커가 자산을 다시 저장해도 지워지지 않는다.
+        return bool(self.db.get("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + asset["mediaId"]))
+
+    def live_asset(self, media_id):
+        """삭제되지 않은 파일만 돌려준다. 삭제된 파일은 없는 파일처럼 다룬다."""
+        asset = self.asset(media_id)
+        if self.is_deleted(asset):
+            raise MediaError(404, "MEDIA_NOT_FOUND")
+        return asset
+
+    def delete_file(self, media_id, user):
+        """올린 사람만 지울 수 있다. 논리 삭제라서 원본과 추출 결과 파일은 저장소에 보관한다."""
+        asset = self.asset(media_id)
+        self.rooms.require_member(asset["roomId"], user)
+        if asset.get("uploader") != user:
+            raise MediaError(403, "NOT_FILE_OWNER")
+        self.db.update("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + media_id,
+                       lambda value: value or {"mediaId": media_id, "deletedBy": user, "deletedAt": int(time.time() * 1000)})
+        return {"mediaId": media_id, "status": "DELETED"}
+
     @retry_conflicts
     def request_upload(self, room_id, user, filename, size):
         room = self.rooms.record(room_id)
@@ -83,7 +124,7 @@ class MediaService:
         ext = ext_of(filename)
         if ext not in ALLOWED_EXT:
             raise MediaError(400, "UNSUPPORTED_TYPE")
-        if not 0 < size <= MAX_BYTES:
+        if not 0 < size <= max_bytes_for(ext):
             raise MediaError(413, "FILE_TOO_LARGE")
         media_id, token = uuid.uuid4().hex, secrets.token_urlsafe(24)
         asset = {"mediaId": media_id, "roomId": room_id, "uploader": user, "filename": filename,
@@ -109,7 +150,7 @@ class MediaService:
         return asset
 
     def validate_data(self, asset, data):
-        if not data or len(data) > MAX_BYTES:
+        if not data or len(data) > max_bytes_for(asset["ext"]):
             raise MediaError(413, "FILE_TOO_LARGE")
         if len(data) != asset["size"]:
             raise MediaError(400, "FILE_SIZE_MISMATCH")
@@ -122,7 +163,7 @@ class MediaService:
         try:
             self.storage.put_original(asset["s3Key"], data)
         except FileExistsError:
-            if self.storage.get_limited(asset["s3Key"], MAX_BYTES) != data:
+            if self.storage.get_limited(asset["s3Key"], max_bytes_for(asset["ext"])) != data:
                 raise MediaError(409, "ALREADY_UPLOADED")
         return self.complete_upload(media_id, asset["uploader"])
 
@@ -143,7 +184,7 @@ class MediaService:
         try:
             if self.storage.size(asset["s3Key"]) != asset["size"]:
                 raise MediaError(400, "FILE_SIZE_MISMATCH")
-            data = self.storage.get_limited(asset["s3Key"], MAX_BYTES)
+            data = self.storage.get_limited(asset["s3Key"], max_bytes_for(asset["ext"]))
         except FileNotFoundError:
             raise MediaError(409, "UPLOAD_NOT_FOUND")
         self.validate_data(asset, data)
@@ -205,6 +246,27 @@ class MediaService:
         return {"mediaId": media_id, "filename": asset["filename"], "kind": asset["type"], "size": asset["size"],
                 "status": job.get("status", asset["status"]), "progress": job.get("progress", 0), "errorCode": job.get("errorCode"),
                 "needsOcr": asset.get("needsOcr", False), "pageCount": asset.get("pageCount", 0), "retryCount": job.get("retryCount", 0)}
+
+    def list_room_files(self, room_id):
+        """방에 올라온 파일 목록(최신순). 파일 카드가 들어 있는 메시지와 처리 상태를 합친다."""
+        files = []
+        deleted = {record.sk.split("#", 1)[1] for record in self.db.query("ROOM#" + room_id, "MEDIA_DELETED#")}
+        for record in self.db.query("ROOM#" + room_id, "MEDIA_MESSAGE#"):
+            media_id = record.sk.split("#", 1)[1]
+            if media_id in deleted:
+                continue
+            message = self.db.get("ROOM#" + room_id, f"MESSAGE#{record.value['messageSeq']:020d}")
+            if not message:
+                continue
+            try:
+                state = self.status(media_id)
+            except MediaError:
+                continue
+            card = message.value.get("media") or {}
+            files.append({"mediaId": media_id, "filename": state["filename"], "ext": card.get("ext", ""), "kind": state["kind"],
+                          "size": state["size"], "status": state["status"], "progress": state["progress"], "pageCount": state["pageCount"],
+                          "sender": message.value.get("sender", ""), "sentAt": message.value.get("sentAt", 0), "messageSeq": record.value["messageSeq"]})
+        return sorted(files, key=lambda item: item["sentAt"], reverse=True)
 
     def transcript(self, media_id):
         asset = self.asset(media_id)
@@ -273,7 +335,7 @@ class MediaService:
             def progress(done, total):
                 self.update_leased(job_id, lease, {"progress": int(done * 100 / max(1, total))})
                 self.emit(asset)
-            result = extract(asset["ext"], self.storage.get_limited(asset["s3Key"], MAX_BYTES), progress, job.get("ocrLanguage", "auto"))
+            result = extract(asset["ext"], self.storage.get_limited(asset["s3Key"], max_bytes_for(asset["ext"])), progress, job.get("ocrLanguage", "auto"))
             result["version"] = asset.get("extractionVersion", 0) + 1
             key = f'extracted/{asset["mediaId"]}/{lease}.json'
             self.storage.put(key, json.dumps(result, ensure_ascii=False).encode())

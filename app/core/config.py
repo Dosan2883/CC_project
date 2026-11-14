@@ -15,7 +15,9 @@ DYNAMODB_TABLE = os.getenv("DYNAMODB_TABLE", "")
 S3_BUCKET = os.getenv("S3_BUCKET", "")
 MEDIA_QUEUE_URL = os.getenv("MEDIA_QUEUE_URL", "")
 REDIS_URL = os.getenv("REDIS_URL", "")
-RUN_MEDIA_WORKER = os.getenv("RUN_MEDIA_WORKER", "1" if BACKEND == "sqlite" else "0") == "1"
+# 서버 한 대(SINGLE_NODE=1)는 DynamoDB와 S3만 쓰고 SQS·Redis 없이 한 프로세스가 워커까지 돌린다. 여러 대는 아래 네 가지가 모두 필요하다.
+SINGLE_NODE = os.getenv("SINGLE_NODE", "0") == "1"
+RUN_MEDIA_WORKER = os.getenv("RUN_MEDIA_WORKER", "1" if BACKEND == "sqlite" or SINGLE_NODE else "0") == "1"
 # 번역(AWS Lambda 함수 URL). 비워 두면 번역 API가 503을 돌려주고 나머지 기능은 그대로 동작한다.
 TRANSLATE_URL = os.getenv("TRANSLATE_URL", "")
 TRANSLATE_SECRET = os.getenv("TRANSLATE_SECRET", "")
@@ -35,6 +37,9 @@ def create_database():
         return SQLiteDatabase(DATA_DIR / "messenger.sqlite3")
     if BACKEND != "dynamodb" or not DYNAMODB_TABLE:
         raise RuntimeError("DATA_BACKEND must be sqlite or dynamodb; DynamoDB requires DYNAMODB_TABLE")
-    if not os.getenv("AUTH_SECRET") or not S3_BUCKET or not MEDIA_QUEUE_URL or not REDIS_URL:
+    if SINGLE_NODE:
+        if not os.getenv("AUTH_SECRET") or not S3_BUCKET:
+            raise RuntimeError("Single-node DynamoDB mode requires AUTH_SECRET and S3_BUCKET")
+    elif not os.getenv("AUTH_SECRET") or not S3_BUCKET or not MEDIA_QUEUE_URL or not REDIS_URL:
         raise RuntimeError("DynamoDB mode requires shared AUTH_SECRET, S3_BUCKET, MEDIA_QUEUE_URL and REDIS_URL")
     return DynamoDatabase(DYNAMODB_TABLE, aws_client("dynamodb"))
