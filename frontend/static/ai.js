@@ -2,6 +2,7 @@
 const aiSelections = new Map();
 /* 요약·번역 근거 원문을 보여 주고, 가능한 항목은 대상 언어로 번역해 바꿔 보여 준다. */
 function evidenceLabel(e) {
+  if (e.source.kind === "transcript") return t("audioWhole");
   return e.source.kind === "message" ? `메시지 #${e.source.messageSeq} · ${new Date(e.sentAt).toLocaleString()}`
     : e.source.kind === "page" ? `파일 ${e.source.mediaId}, ${e.source.page}쪽` : `녹취 ${e.source.start}–${e.source.end}초`;
 }
@@ -14,23 +15,39 @@ async function translateEvidence(e, target) {
     return (await api("/api/ai/translate-page", "POST", {mediaId: e.source.mediaId, page: e.source.page, target})).translated;
   return null;
 }
-function showEvidence(box, evidence, target, active) {
+function showEvidence(box, evidence, target, active, translate = true) {
   box.textContent = "";
   const head = document.createElement("p"); head.textContent = "선택한 원문 근거:"; box.append(head);
   for (const e of evidence) {
     const item = document.createElement("pre"); item.style.whiteSpace = "pre-wrap";
     item.textContent = `[${e.id}] ${evidenceLabel(e)}\n${e.text}`;
     box.append(item);
+    if (!translate) continue;  // 번역 작업은 결과 자체가 번역이라 근거를 또 번역하지 않는다
     translateEvidence(e, target).then(translated => {
       if (translated && translated.trim() !== e.text.trim() && active())
         item.textContent = `[${e.id}] ${evidenceLabel(e)}\n${translated}\n\n(원문)\n${e.text}`;
       else if (translated && active()) item.textContent += "\n\n(번역 결과가 원문과 같습니다)";
-      else if (!translated && active()) item.textContent += "\n\n(이 근거는 번역하지 않습니다: 일부 구간 선택 또는 녹취)";
+      // 번역할 수 없는 근거(일부 구간 선택, 녹취)는 안내 없이 원문만 보여 준다
     }).catch(error => {  // 번역에 실패하면 원문을 그대로 두고 이유를 표시한다
       if (active()) item.textContent += `\n\n(번역 실패: ${error.code || error.status || error.message})`;
     });
   }
 }
+function summaryNameRow(roomId, entryId, active) {
+  const row = document.createElement("div"), input = document.createElement("input"), save = document.createElement("button");
+  row.className = "name-row"; input.maxLength = 60; input.placeholder = t("summaryNameLabel");
+  save.type = "button"; save.textContent = t("summarySave");
+  api(`/api/ai/rooms/${roomId}/summaries/${entryId}`).then(entry => { if (active() && !input.value) input.value = entry.title; }).catch(() => {});
+  save.onclick = async () => {
+    if (!input.value.trim()) return;
+    save.disabled = true;
+    try { await renameSummary(roomId, entryId, input.value); } catch { toast(t("failed")); }
+    finally { save.disabled = false; }
+  };
+  row.append(input, save);
+  return row;
+}
+
 async function runAi(sources, kind = "summarize") {
   if (!currentRoom || !sources.length) return toast("메시지 또는 문단을 먼저 선택하세요.");
   if (!hasTranslateConsent()) {
@@ -38,6 +55,8 @@ async function runAi(sources, kind = "summarize") {
     rememberTranslateConsent();
   }
   const roomId = currentRoom.roomId, generation = viewGeneration, authToken = token;
+  // 번역은 번역 대상 언어로, 요약은 앱 표시 언어로 만든다. 근거 원문은 번역 대상 언어로 보여 준다.
+  const outputLanguage = kind === "translate" ? targetLang : locale, evidenceLanguage = targetLang;
   const dialog = document.createElement("dialog"), state = document.createElement("p"), output = document.createElement("pre");
   output.style.whiteSpace = "pre-wrap";
   const close = document.createElement("button"); close.textContent = "닫기"; close.onclick = () => { dialog.close(); dialog.remove(); };
@@ -45,6 +64,13 @@ async function runAi(sources, kind = "summarize") {
   dialog.append(state, output, evidenceBox, close); document.body.append(dialog); dialog.showModal();
   let jobId;
   const active = () => dialog.open && currentRoom?.roomId === roomId && generation === viewGeneration && token === authToken;
+  async function showExisting(info) {  // 이미 만들어진 요약이면 새로 만들지 않고 저장된 내용을 보여 준다
+    state.textContent = t("summaryExists");
+    const full = await api(`/api/ai/rooms/${roomId}/summaries/${info.entryId}`);
+    if (!active()) return;
+    output.textContent = [full.title, full.result.text].join("\n\n");
+    showEvidence(evidenceBox, full.result.evidence, evidenceLanguage, active);
+  }
   async function poll() {
     for (let i = 0; i < 180 && active(); i++) {
       const job = await api(`/api/ai/jobs/${jobId}`);
@@ -52,13 +78,15 @@ async function runAi(sources, kind = "summarize") {
       state.textContent = `${job.status} · 시도 ${job.attempts}/3`;
       if (job.status === "COMPLETED") {
         output.textContent = job.result.text;
-        showEvidence(evidenceBox, job.result.evidence, job.target, active);
+        if (job.entryId) output.after(summaryNameRow(roomId, job.entryId, active));  // 요약 이름 정하기 (목록에 이 이름으로 보인다)
+        showEvidence(evidenceBox, job.result.evidence, evidenceLanguage, active, kind !== "translate");
+        refreshSummaries();
         return;
       }
       if (job.status === "FAILED") {
         state.textContent += ` · ${job.errorCode}`;
         const retryButton = document.createElement("button"); retryButton.textContent = t("retry");
-        retryButton.onclick = async () => { retryButton.remove(); try { jobId = (await api(`/api/ai/jobs/${jobId}/retry`, "POST")).jobId; await poll(); } catch (e) { state.textContent = e.code || t("failed"); } };
+        retryButton.onclick = async () => { retryButton.remove(); try { const again = await api(`/api/ai/jobs/${jobId}/retry`, "POST"); if (again.existing) return await showExisting(again); jobId = again.jobId; await poll(); } catch (e) { state.textContent = e.code || t("failed"); } };
         dialog.append(retryButton); return;
       }
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -67,9 +95,11 @@ async function runAi(sources, kind = "summarize") {
   }
   try {
     state.textContent = "선택 자료 처리 중…";
-    jobId = (await api("/api/ai/jobs", "POST", {roomId, kind, sourceLanguage: $("srcLang").value || "auto", target: targetLang, sources, consent: true})).jobId;
+    const created = await api("/api/ai/jobs", "POST", {roomId, kind, sourceLanguage: $("srcLang").value || "auto", target: outputLanguage, sources, consent: true});
+    if (created.existing) return await showExisting(created);
+    jobId = created.jobId;
     await poll();
-  } catch (e) { if (active()) state.textContent = e.code || t("failed"); }
+  } catch (e) { if (active()) state.textContent = t("aiErr_" + e.code) || e.code || t("failed"); }
 }
 
 $("roomSummary").classList.remove("soon");

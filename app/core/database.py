@@ -124,7 +124,10 @@ class DynamoDatabase(Database):
         return Record(item["pk"]["S"], item["sk"]["S"], decode(item["payload"]["S"]), int(item["version"]["N"]))
 
     def query(self, pk, prefix=""):
-        args = dict(TableName=self.table_name, KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)", ExpressionAttributeValues={":pk": {"S": pk}, ":prefix": {"S": prefix}}, ConsistentRead=True)
+        if prefix:
+            args = dict(TableName=self.table_name, KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)", ExpressionAttributeValues={":pk": {"S": pk}, ":prefix": {"S": prefix}}, ConsistentRead=True)
+        else:  # DynamoDB는 빈 문자열을 키 조건에 쓸 수 없다. 파티션 전체를 읽는다
+            args = dict(TableName=self.table_name, KeyConditionExpression="pk = :pk", ExpressionAttributeValues={":pk": {"S": pk}}, ConsistentRead=True)
         records = []
         while True:
             response = self.client.query(**args)

@@ -21,7 +21,42 @@ QUOTA_WINDOW = 3600
 CLAIM_LEASE = 180
 CLAIM_WAIT = 30
 RESERVATION_LEASE = 180
+MAX_SEGMENTS = 300     # 한 음성에서 한 번에 번역하는 구간 수의 상한
+NUMBERED_LINE = re.compile(r"^\s*\[(\d+)\]\s*(.*)$")
 SENTENCE_END = re.compile(r"(?<=[.!?。！？])\s+")
+
+
+SCRIPTS = {"kana": re.compile("[぀-ヿ]"), "hangul": re.compile("[가-힣]"),
+           "han": re.compile("[一-鿿]"), "latin": re.compile("[A-Za-zÀ-ÿ]")}
+
+
+def text_matches_language(text, code):
+    """글자 종류로 본 글이 설정한 원문 언어와 맞는지. 맞지 않으면(언어 설정이 실제 글과 다르면) 번역하지 않고 그대로 보여 준다.
+
+    한국어·일본어·중국어는 글자로 구별하고, 영어·스페인어·프랑스어는 라틴 글자 비중으로만 본다(서로는 구별하지 못함)."""
+    kana, hangul, han, latin = (len(SCRIPTS[name].findall(text)) for name in ("kana", "hangul", "han", "latin"))
+    if code == "ko":
+        return hangul > 0
+    if code == "ja":
+        return kana > 0 or (han > 0 and hangul == 0)
+    if code == "zh-CN":
+        return han > 0 and kana == 0 and hangul == 0
+    if code in ("en", "es", "fr"):
+        return latin > kana + hangul + han
+    return True
+
+
+def parse_numbered(text):
+    """'[1] 문장' 줄들을 {번호: 문장}으로 바꾼다. 번호 없는 줄은 앞 항목의 이어진 줄로 본다."""
+    parsed, current = {}, None
+    for line in text.splitlines():
+        match = NUMBERED_LINE.match(line)
+        if match:
+            current = int(match.group(1))
+            parsed[current] = match.group(2).strip()
+        elif current is not None and line.strip():
+            parsed[current] = (parsed[current] + " " + line.strip()).strip()
+    return parsed
 
 
 def split_text(text, limit=CHUNK_CHARS):
@@ -81,16 +116,76 @@ class TranslationService:
             verify()
             return {"translated": text, "target": target, "cached": False, "sameLanguage": True}
 
-        translated, cached = self.translate_text(text, target, user, verify, self.source_language(message.get("sourceLanguage")))
+        source = self.source_language(message.get("sourceLanguage"))
+        if source and not text_matches_language(text, source):  # 설정한 원문 언어와 실제 글이 다르면 그대로 둔다
+            verify()
+            return {"translated": text, "target": target, "cached": False, "sameLanguage": True, "languageMismatch": True}
+        translated, cached = self.translate_text(text, target, user, verify, source)
         verify()
         return {"translated": translated, "target": target, "cached": cached, "sameLanguage": False}
+
+    def translate_segments(self, media_id, target, user):
+        """음성 녹취의 모든 구간을 번역한다. 구간 번호를 붙여 묶음으로 보내고(호출 수를 줄임), 번호가 어긋난 묶음은 구간마다 따로 다시 번역한다."""
+        if target not in LANGUAGE_NAMES:
+            raise HTTPException(422, "INVALID_LANGUAGE")
+        try:
+            asset = self.media.live_asset(media_id)
+            self.rooms.require_member(asset["roomId"], user)
+        except (MediaError, HTTPException):
+            raise HTTPException(404, "MEDIA_NOT_FOUND")
+        try:
+            transcript = self.media.transcript(media_id)
+        except MediaError as error:
+            raise HTTPException(error.status, error.code)
+        segments = transcript.get("segments") or []
+        if not segments:
+            raise HTTPException(422, "NO_SEGMENTS")
+        if len(segments) > MAX_SEGMENTS or sum(len(s["text"]) for s in segments) > MAX_PAGE_CHARS:
+            raise HTTPException(422, "TRANSCRIPT_TOO_LONG")
+        source = self.source_language(transcript.get("language"))
+
+        def verify():
+            try:
+                self.rooms.require_member(asset["roomId"], user)
+                self.media.live_asset(media_id)
+            except (MediaError, HTTPException):
+                raise HTTPException(404, "MEDIA_NOT_FOUND")
+
+        def result(values):
+            return {"target": target, "segments": [{"start": s["start"], "end": s["end"], "text": s["text"], "translated": value}
+                                                   for s, value in zip(segments, values)]}
+
+        if source == target:  # 이미 같은 언어면 호출하지 않는다
+            return result([s["text"] for s in segments])
+        batches, current, size = [], [], 0
+        for index, segment in enumerate(segments):
+            line = f"[{index + 1}] {segment['text']}"
+            if current and size + len(line) + 1 > CHUNK_CHARS:
+                batches.append(current)
+                current, size = [], 0
+            current.append((index, line))
+            size += len(line) + 1
+        batches.append(current)
+        values = [None] * len(segments)
+        for batch in batches:
+            output, _ = self.translate_text("\n".join(line for _, line in batch), target, user, verify, source)
+            parsed = parse_numbered(output)
+            if all(parsed.get(index + 1) for index, _ in batch):
+                for index, _ in batch:
+                    values[index] = parsed[index + 1]
+                continue
+            # 번호가 하나라도 빠지면 줄이 이웃 구간에 붙어 어긋났을 수 있으므로, 그 묶음은 구간마다 따로 번역한다
+            for index, _ in batch:
+                values[index], _ = self.translate_text(segments[index]["text"], target, user, verify, source)
+        verify()
+        return result(values)
 
     def translate_page(self, media_id, page, target, user):
         """업로드한 문서의 한 페이지를 번역한다. 서버가 저장된 추출 글자를 직접 읽는다."""
         if target not in LANGUAGE_NAMES:
             raise HTTPException(422, "INVALID_LANGUAGE")
         try:
-            asset = self.media.asset(media_id)
+            asset = self.media.live_asset(media_id)
             self.rooms.require_member(asset["roomId"], user)
         except (MediaError, HTTPException):
             raise HTTPException(404, "MEDIA_NOT_FOUND")  # 방 밖 사용자에게는 파일의 존재도 알리지 않는다
@@ -114,7 +209,7 @@ class TranslationService:
             return result
         def verify():
             try:
-                current_asset = self.media.asset(media_id)
+                current_asset = self.media.live_asset(media_id)
                 self.rooms.require_member(current_asset["roomId"], user)
                 current = self.media.transcript(media_id)
             except MediaError as error:
@@ -123,6 +218,8 @@ class TranslationService:
                 current.get("version", 1) != transcript.get("version", 1) or current.get("pages") != pages):
                 raise HTTPException(409, "SOURCE_VERSION_CHANGED")
 
+        if source and not text_matches_language(text, source):  # 설정한 원문 언어와 실제 글이 다르면 번역하지 않는다
+            return checked({"translated": text, "target": target, "page": page, "cached": False, "languageMismatch": True})
         key, cached = self.cached(target, text, source)
         if cached:
             return checked({"translated": cached, "target": target, "page": page, "cached": True})

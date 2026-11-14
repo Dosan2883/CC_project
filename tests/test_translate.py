@@ -120,6 +120,12 @@ class TranslateApiTests(ApiTestBase):
         self.assertEqual((status, result["translated"], result["sameLanguage"]), (200, "Hello there", True))
         self.assertEqual(self.fake.calls, [])
 
+    def test_wrong_source_language_setting_keeps_text_as_is(self):
+        room, seq, token = self.room_with_message("mismatch-lang", "This is English text", source="ko")  # 한국어로 설정했지만 영어로 씀
+        status, result = self.translate(token, room, seq, "ja")
+        self.assertEqual((status, result["translated"], result["languageMismatch"]), (200, "This is English text", True))
+        self.assertEqual(self.fake.calls, [])  # 외부 번역을 부르지 않는다
+
     def test_requires_login_and_membership(self):
         room, seq, owner = self.room_with_message("perm-room", "비공개 내용", members=())
         self.assertEqual(self.request("/api/ai/translate", "POST", {"roomId": room, "messageSeq": seq, "target": "en"})[0], 401)

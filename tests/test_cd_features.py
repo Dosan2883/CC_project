@@ -59,8 +59,7 @@ class FeatureChecks(unittest.TestCase):
         first = self.jobs.submit(self.body, "owner")
         self.assertTrue(self.jobs.work(first["jobId"]))
         second = self.jobs.submit(self.body, "owner")
-        self.assertTrue(self.jobs.work(second["jobId"]))
-        self.assertEqual(self.jobs.get(second["jobId"], "owner")["result"]["text"], "결정 [1]")
+        self.assertTrue(second["existing"])  # 이미 만든 요약이라 새 작업이 없다
         self.assertEqual(self.model.calls, 1)  # 같은 선택이면 두 번째는 Lambda를 부르지 않는다
         MessageStore(self.db, self.rooms).append("r", "owner", "ship on Monday", "en")
         changed = {**self.body, "sources": [{"kind": "message", "messageSeq": 2, "startChar": 0}]}
@@ -77,6 +76,82 @@ class FeatureChecks(unittest.TestCase):
         self.jobs.work(job["jobId"])
         self.assertEqual(self.db.get("AI_JOBS", job["jobId"]).value["status"], "PENDING")
         self.assertIsNone(self.jobs.cached_summary({**self.db.get("AI_JOBS", job["jobId"]).value}))
+
+    def test_summary_list_names_sharing_and_rename(self):
+        job = self.jobs.submit({**self.body, "title": "  금요일   배포 요약  "}, "owner")
+        self.assertTrue(self.jobs.work(job["jobId"]))
+        listed = self.jobs.list_summaries("r", "owner")
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["title"], "금요일 배포 요약")
+        self.assertNotIn("resultKey", listed[0])
+        self.assertEqual(self.jobs.get(job["jobId"], "owner")["entryId"], listed[0]["entryId"])
+        detail = self.jobs.read_summary("r", listed[0]["entryId"], "owner")
+        self.assertEqual(detail["result"]["text"], "결정 [1]")
+        again = self.jobs.submit(self.body, "owner")  # 같은 선택이면 새 작업·새 항목 없이 기존 요약을 알려 준다
+        self.assertTrue(again["existing"])
+        self.assertEqual((again["entryId"], again["title"]), (listed[0]["entryId"], "금요일 배포 요약"))
+        self.assertNotIn("jobId", again)
+        listed = self.jobs.list_summaries("r", "owner")
+        self.assertEqual((len(listed), listed[0]["title"], self.model.calls), (1, "금요일 배포 요약", 1))
+        self.assertEqual(self.jobs.rename_summary("r", listed[0]["entryId"], "새 이름", "owner")["title"], "새 이름")
+        with self.assertRaises(HTTPException):
+            self.jobs.rename_summary("r", listed[0]["entryId"], "  ", "owner")
+        with self.assertRaises(HTTPException):
+            self.jobs.list_summaries("r", "outsider")
+        with self.assertRaises(HTTPException):
+            self.jobs.read_summary("r", listed[0]["entryId"], "outsider")
+        with self.assertRaises(HTTPException):
+            self.jobs.rename_summary("r", listed[0]["entryId"], "해킹", "outsider")
+
+    def test_delete_summary_owner_only_and_allows_regeneration(self):
+        job = self.jobs.submit(self.body, "owner")
+        self.assertTrue(self.jobs.work(job["jobId"]))
+        entry = self.jobs.list_summaries("r", "owner")[0]["entryId"]
+        with self.assertRaises(HTTPException):
+            self.jobs.delete_summary("r", entry, "outsider")
+        self.assertEqual(self.jobs.delete_summary("r", entry, "owner")["deleted"], True)
+        self.assertEqual(self.jobs.list_summaries("r", "owner"), [])
+        with self.assertRaises(HTTPException):
+            self.jobs.delete_summary("r", entry, "owner")
+        again = self.jobs.submit(self.body, "owner")  # 지운 뒤에는 같은 선택도 새로 요약한다
+        self.assertNotIn("existing", again)
+        self.assertTrue(self.jobs.work(again["jobId"]))
+        self.assertEqual(self.model.calls, 2)
+
+    def test_room_files_list_newest_first_with_status(self):
+        from app.core.database import Change
+        for seq, (media_id, name, at) in enumerate([("m1", "a.pdf", 100), ("m2", "b.pdf", 200)], start=10):
+            asset = {"mediaId": media_id, "roomId": "r", "filename": name, "type": "document", "ext": "pdf", "size": 5, "status": "COMPLETED", "jobId": media_id, "pageCount": 2}
+            card = {"mediaId": media_id, "filename": name, "kind": "document", "ext": "pdf", "size": 5}
+            self.db.commit([
+                Change("MEDIA", "ASSET#" + media_id, None, asset),
+                Change("MEDIA_JOBS", media_id, None, {"status": "COMPLETED", "progress": 100, "errorCode": None, "retryCount": 0}),
+                Change("ROOM#r", f"MESSAGE#{seq:020d}", None, {"sender": "owner", "sentAt": at, "media": card, "bodyOriginal": name}),
+                Change("ROOM#r", "MEDIA_MESSAGE#" + media_id, None, {"messageSeq": seq}),
+            ])
+        files = self.media.list_room_files("r")
+        self.assertEqual([f["filename"] for f in files], ["b.pdf", "a.pdf"])
+        self.assertEqual((files[0]["status"], files[0]["sender"], files[0]["pageCount"]), ("COMPLETED", "owner", 2))
+
+    def test_delete_file_owner_only_hides_everywhere(self):
+        from app.core.database import Change
+        from app.media.service import MediaError
+        asset = {"mediaId": "m9", "roomId": "r", "uploader": "owner", "filename": "x.pdf", "type": "document", "ext": "pdf", "size": 5, "status": "COMPLETED", "jobId": "m9", "pageCount": 1}
+        self.db.commit([
+            Change("MEDIA", "ASSET#m9", None, asset),
+            Change("MEDIA_JOBS", "m9", None, {"status": "COMPLETED", "progress": 100, "errorCode": None, "retryCount": 0}),
+            Change("ROOM#r", f"MESSAGE#{20:020d}", None, {"sender": "owner", "sentAt": 1, "media": {"ext": "pdf"}, "bodyOriginal": "x.pdf"}),
+            Change("ROOM#r", "MEDIA_MESSAGE#m9", None, {"messageSeq": 20}),
+        ])
+        self.assertEqual([f["mediaId"] for f in self.media.list_room_files("r")], ["m9"])
+        self.assertEqual(self.media.live_asset("m9")["mediaId"], "m9")
+        with self.assertRaises(HTTPException):
+            self.media.delete_file("m9", "outsider")  # 방 멤버가 아니면 거부
+        self.assertEqual(self.media.delete_file("m9", "owner")["status"], "DELETED")
+        self.assertEqual(self.media.list_room_files("r"), [])
+        with self.assertRaises(MediaError):
+            self.media.live_asset("m9")  # 삭제된 파일은 요약·번역에서도 없는 파일로 본다
+        self.assertEqual(self.media.delete_file("m9", "owner")["status"], "DELETED")  # 다시 지워도 같은 결과
 
     def test_failure_backoff_and_dead_letter(self):
         self.model.fail = True

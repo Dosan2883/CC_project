@@ -75,7 +75,7 @@ window.addEventListener("focus", markVisibleRead);
 function enterRoom(r) {
   if (currentRoom && currentRoom.roomId === r.roomId && ws) { $("app").classList.add("in-room"); return; }
   closeSocket();
-  currentRoom = r; viewGeneration++; lastSeq = 0; retry = 0; prevMsg = null;
+  currentRoom = r; viewGeneration++; closeDocPanel(); lastSeq = 0; retry = 0; prevMsg = null;
   aiSelections.clear();
   loadOutbox(r.roomId);
   clearFilePolling(); readBadges.clear(); readMembers = []; acknowledgedRead = r.lastReadSeq || 0;
@@ -100,7 +100,7 @@ function closeSocket() {
 function leaveView() {  // 방을 떠나지 않고 화면만 닫는다
   viewGeneration++;
   clearFilePolling();
-  closeSocket(); currentRoom = null;
+  closeSocket(); currentRoom = null; closeDocPanel();
   $("chat").style.display = "none"; $("empty").style.display = "grid";
   $("app").classList.remove("in-room"); $("status").textContent = "";
   loadRooms();

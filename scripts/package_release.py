@@ -7,7 +7,9 @@ def main():
     root = Path(__file__).resolve().parents[1]
     target = root / "dist" / "messenger.zip"
     target.parent.mkdir(exist_ok=True)
-    files = [root / "main.py", root / "requirements.txt", root / "requirements-ocr.txt", root / "scripts" / "prepare_ocr.py"]
+    files = [root / "main.py", root / "requirements.txt", root / "requirements-ocr.txt", root / "scripts" / "prepare_ocr.py",
+             root / "requirements-stt.txt", root / "scripts" / "prepare_stt.py",
+             root / "scripts" / "__init__.py", root / "scripts" / "check_aws.py", root / "scripts" / "setup_aws.py", root / "scripts" / "migrate_to_aws.py"]
     for folder in ("app", "frontend"):
         files.extend(path for path in (root / folder).rglob("*") if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc")
     with ZipFile(target, "w", ZIP_DEFLATED) as archive:

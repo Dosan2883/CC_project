@@ -93,7 +93,21 @@ def extract_docx(data: bytes, on_progress: Progress) -> dict:
 EXTRACTORS = {"txt": extract_txt, "pdf": extract_pdf, "docx": extract_docx}
 
 
+def extract_media(ext: str, data: bytes, on_progress: Progress, language="auto") -> dict:
+    """음성·영상을 글자로 바꾼다. 결과는 pages 없이 segments [{start, end, text}]로 돌려준다."""
+    from app.media.whisper import SpeechError, transcribe_bytes
+    try:
+        out = transcribe_bytes(data, ext, language, on_progress)
+    except SpeechError as error:
+        raise ExtractError(error.code) from error
+    return {"pages": [], "needsOcr": False, "segments": out["segments"], "language": out["language"],
+            "durationSeconds": out["durationSeconds"], "recognitionModel": out["model"], "version": 1}
+
+
 def extract(ext: str, data: bytes, on_progress: Progress, language="auto") -> dict:
+    from app.media.whisper import MEDIA_EXTENSIONS
+    if ext in MEDIA_EXTENSIONS:
+        return extract_media(ext, data, on_progress, language)
     if ext in ("jpg", "jpeg", "png"):
         result = {"pages": [""], "needsOcr": True}
     else:

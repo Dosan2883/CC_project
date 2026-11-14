@@ -49,7 +49,7 @@ async function startSession(tok, nickname) {
 function logout(expired) {
   cancelRoomLoads(); cancelApiRequests(); viewGeneration++;
   clearFilePolling();
-  closeSocket(); currentRoom = null; token = null; me = null; tokenStore.set(null);
+  closeSocket(); currentRoom = null; token = null; closeDocPanel(); me = null; tokenStore.set(null);
   clearInterval(roomsTimer); lastRooms = []; lastPublic = [];
   renderRooms(); $("roomsRetry").hidden = true;
   $("chat").style.display = "none"; $("empty").style.display = "grid"; $("app").classList.remove("in-room");
