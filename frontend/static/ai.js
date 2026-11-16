@@ -15,22 +15,34 @@ async function translateEvidence(e, target) {
     return (await api("/api/ai/translate-page", "POST", {mediaId: e.source.mediaId, page: e.source.page, target})).translated;
   return null;
 }
-function showEvidence(box, evidence, target, active, translate = true) {
+function canTranslateEvidence(e) {
+  const partial = e.source.startChar > 0 || e.source.endChar != null;
+  return !partial && (e.source.kind === "message" || e.source.kind === "page");
+}
+/* 근거는 원문으로 보여 주고, 번역할 수 있는 근거에만 번역 버튼을 둔다. 누를 때만 번역을 부르므로 요약을 열 때 번역 호출이 나가지 않는다. */
+function showEvidence(box, evidence, target, active) {
   box.textContent = "";
   const head = document.createElement("p"); head.textContent = "선택한 원문 근거:"; box.append(head);
   for (const e of evidence) {
-    const item = document.createElement("pre"); item.style.whiteSpace = "pre-wrap";
+    const row = document.createElement("div"), item = document.createElement("pre"); item.style.whiteSpace = "pre-wrap";
     item.textContent = `[${e.id}] ${evidenceLabel(e)}\n${e.text}`;
-    box.append(item);
-    if (!translate) continue;  // 번역 작업은 결과 자체가 번역이라 근거를 또 번역하지 않는다
-    translateEvidence(e, target).then(translated => {
-      if (translated && translated.trim() !== e.text.trim() && active())
-        item.textContent = `[${e.id}] ${evidenceLabel(e)}\n${translated}\n\n(원문)\n${e.text}`;
-      else if (translated && active()) item.textContent += "\n\n(번역 결과가 원문과 같습니다)";
-      // 번역할 수 없는 근거(일부 구간 선택, 녹취)는 안내 없이 원문만 보여 준다
-    }).catch(error => {  // 번역에 실패하면 원문을 그대로 두고 이유를 표시한다
-      if (active()) item.textContent += `\n\n(번역 실패: ${error.code || error.status || error.message})`;
-    });
+    row.append(item); box.append(row);
+    if (!canTranslateEvidence(e)) continue;  // 일부 구간 선택, 녹취, 음성 전체는 번역 버튼이 없다
+    const button = document.createElement("button"); button.type = "button"; button.textContent = t("translate");
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const translated = await translateEvidence(e, target);
+        if (!active()) return;
+        if (translated && translated.trim() !== e.text.trim()) item.textContent = `[${e.id}] ${evidenceLabel(e)}\n${translated}\n\n(원문)\n${e.text}`;
+        else item.textContent += "\n\n(번역 결과가 원문과 같습니다)";
+        button.remove();
+      } catch (error) {
+        if (active()) item.textContent += `\n\n(번역 실패: ${error.code || error.status || error.message})`;
+        button.disabled = false;
+      }
+    };
+    row.append(button);
   }
 }
 function summaryNameRow(roomId, entryId, active) {
@@ -57,13 +69,13 @@ async function runAi(sources, kind = "summarize") {
   const roomId = currentRoom.roomId, generation = viewGeneration, authToken = token;
   // 번역은 번역 대상 언어로, 요약은 앱 표시 언어로 만든다. 근거 원문은 번역 대상 언어로 보여 준다.
   const outputLanguage = kind === "translate" ? targetLang : locale, evidenceLanguage = targetLang;
-  const dialog = document.createElement("dialog"), state = document.createElement("p"), output = document.createElement("pre");
+  const win = openFloatWindow(kind === "translate" ? t("translate") : kind === "meeting-summary" ? t("roomSummary") : t("summarize"), {width: 480, height: 480});
+  const state = document.createElement("p"), output = document.createElement("pre");
   output.style.whiteSpace = "pre-wrap";
-  const close = document.createElement("button"); close.textContent = "닫기"; close.onclick = () => { dialog.close(); dialog.remove(); };
   const evidenceBox = document.createElement("div");
-  dialog.append(state, output, evidenceBox, close); document.body.append(dialog); dialog.showModal();
+  win.body.append(state, output, evidenceBox);  // 떠 있는 창이라 결과를 열어 둔 채 채팅을 계속 볼 수 있다
   let jobId;
-  const active = () => dialog.open && currentRoom?.roomId === roomId && generation === viewGeneration && token === authToken;
+  const active = () => win.open && currentRoom?.roomId === roomId && generation === viewGeneration && token === authToken;
   async function showExisting(info) {  // 이미 만들어진 요약이면 새로 만들지 않고 저장된 내용을 보여 준다
     state.textContent = t("summaryExists");
     const full = await api(`/api/ai/rooms/${roomId}/summaries/${info.entryId}`);
@@ -79,7 +91,7 @@ async function runAi(sources, kind = "summarize") {
       if (job.status === "COMPLETED") {
         output.textContent = job.result.text;
         if (job.entryId) output.after(summaryNameRow(roomId, job.entryId, active));  // 요약 이름 정하기 (목록에 이 이름으로 보인다)
-        showEvidence(evidenceBox, job.result.evidence, evidenceLanguage, active, kind !== "translate");
+        showEvidence(evidenceBox, job.result.evidence, evidenceLanguage, active);
         refreshSummaries();
         return;
       }
@@ -87,7 +99,7 @@ async function runAi(sources, kind = "summarize") {
         state.textContent += ` · ${job.errorCode}`;
         const retryButton = document.createElement("button"); retryButton.textContent = t("retry");
         retryButton.onclick = async () => { retryButton.remove(); try { const again = await api(`/api/ai/jobs/${jobId}/retry`, "POST"); if (again.existing) return await showExisting(again); jobId = again.jobId; await poll(); } catch (e) { state.textContent = e.code || t("failed"); } };
-        dialog.append(retryButton); return;
+        win.body.append(retryButton); return;
       }
       await new Promise(resolve => setTimeout(resolve, 1000));
     }

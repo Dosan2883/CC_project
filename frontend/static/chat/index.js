@@ -78,7 +78,7 @@ function enterRoom(r) {
   currentRoom = r; viewGeneration++; closeDocPanel(); lastSeq = 0; retry = 0; prevMsg = null;
   aiSelections.clear();
   loadOutbox(r.roomId);
-  clearFilePolling(); readBadges.clear(); readMembers = []; acknowledgedRead = r.lastReadSeq || 0;
+  clearFilePolling(); readBadges.clear(); readMembers = []; acknowledgedRead = r.lastReadSeq || 0; resetParticipants();
   for (const k in cards) delete cards[k];
   $("log").replaceChildren(); $("members").textContent = ""; $("roomTitle").textContent = r.name;
   $("empty").style.display = "none"; $("chat").style.display = "flex";
@@ -88,6 +88,7 @@ function enterRoom(r) {
     if (currentRoom?.roomId === r.roomId) { readMembers = members; renderReadReceipts(); }
   }).catch(() => {});
   renderRooms();
+  loadParticipants();  // 참여자 목록(채팅 상단의 참여자 버튼)
   connect();
   $("body").focus();
 }
@@ -100,7 +101,7 @@ function closeSocket() {
 function leaveView() {  // 방을 떠나지 않고 화면만 닫는다
   viewGeneration++;
   clearFilePolling();
-  closeSocket(); currentRoom = null; closeDocPanel();
+  closeSocket(); currentRoom = null; closeDocPanel(); resetParticipants();
   $("chat").style.display = "none"; $("empty").style.display = "grid";
   $("app").classList.remove("in-room"); $("status").textContent = "";
   loadRooms();
@@ -148,8 +149,8 @@ function connect() {
     if (d.type === "message:new") { if (d.messageSeq > lastSeq) { lastSeq = d.messageSeq; addMessage(d); markVisibleRead(); } }
     else if (d.type === "message:ack") acknowledgeMessage(d.clientMessageId);
     else if (d.type === "media:update" || d.type === "media:ready") { if (cards[d.mediaId]) cards[d.mediaId](d); }
-    else if (d.type === "presence") $("members").textContent = `${t("online")}: ${d.members.join(", ")}`;
-    else if (d.type === "system") addSystem(`${d.user}${t(d.event === "joined" ? "joinedSys" : "leftSys")}`);
+    else if (d.type === "presence") { $("members").textContent = `${t("online")}: ${d.members.join(", ")}`; setOnlineUsers(d.members); }
+    else if (d.type === "system") { addSystem(`${d.user}${t(d.event === "joined" ? "joinedSys" : "leftSys")}`); loadParticipants(); }
     else if (d.type === "room:deleted") { leaveView(); toast(t("roomDeleted")); }
     else if (d.type === "read:update") {
       readMembers = readMembers.filter(member => member.user !== d.user).concat(d);
@@ -194,7 +195,7 @@ function addMessage(m) {
   meta.append(document.createTextNode(mine ? time : `${m.sender} · ${time}`));
   const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = m.sourceLanguage;
   if (!m.media) meta.append(badge);
-  const bubble = m.media ? fileCard(m.media) : Object.assign(document.createElement("div"), { className: "bubble", textContent: m.bodyOriginal });  // 원문 그대로 표시
+  const bubble = m.media ? fileCard(m.media, m.sender) : Object.assign(document.createElement("div"), { className: "bubble", textContent: m.bodyOriginal });  // 원문 그대로 표시
   // 번역: 서버가 저장된 메시지를 직접 읽어 번역한다. 요약은 아직 자리만 만들어 둔다.
   const acts = document.createElement("div"); acts.className = "acts";
   const translateButton = document.createElement("button"); translateButton.type = "button"; translateButton.textContent = t("translate");

@@ -36,95 +36,85 @@ function pageTranslateButton(mediaId, page, pre) {
 
 /* 문서 본문을 오른쪽 패널에 연다. 파일 카드의 본문 보기와 문서 목록이 함께 쓴다. 열 때마다 저장된 최신 추출 결과를 읽는다. */
 const AUDIO_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac"];
-const fmtClock = seconds => { const whole = Math.max(0, Math.floor(seconds)); return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`; };
+const isAudioExt = ext => AUDIO_EXTENSIONS.includes((ext || "").toLowerCase());
+const audioPlayers = new Set();
+function stopAllAudio() { for (const player of audioPlayers) player.pause(); audioPlayers.clear(); }  // 방을 바꾸거나 나가면 재생을 멈춘다
 
-/* 음성: 재생기 + 구간 목록. 재생 중인 구간에 불이 들어오고, 각 구간 아래에 번역 대상 언어의 번역이 항상 보인다. */
-function audioView(mediaId, transcript) {
-  const box = el("div", "audio-view");
+/* 문서·이미지·영상 본문을 파일 카드 바로 아래 칸에 채운다. 열 때마다 저장된 최신 추출 결과를 읽는다. */
+async function fillDocument(text, mediaId) {
+  const r = await api(`/api/media/${mediaId}/transcript`);
+  text.replaceChildren();
+  (r.pages || []).forEach((page, i) => {
+    if (r.pages.length > 1) text.append(el("h4", null, `${t("pageN")} ${i + 1}`));
+    const pre = el("pre", null, page || t("emptyText"));
+    // 번역 버튼은 본문 위에 둔다. 긴 페이지에서도 스크롤 없이 바로 보이고, 번역은 버튼 아래(원문 위)에 붙는다.
+    if (page && page.trim()) text.append(pageTranslateButton(mediaId, i + 1, pre));
+    text.append(pre);
+    pageReview(mediaId, i + 1, pre, r);
+  });
+  (r.segments || []).forEach(segment => {
+    const label = el("label", null, `${segment.start}–${segment.end}초 · ${segment.text}`);
+    const source = {kind:"segment", mediaId, start:segment.start, end:segment.end};
+    const select = document.createElement("input"); select.type = "checkbox";
+    select.onchange = () => select.checked ? aiSelections.set(`${mediaId}:${segment.start}`, source) : aiSelections.delete(`${mediaId}:${segment.start}`);
+    const translate = el("button", null, t("translate")); translate.type = "button"; translate.onclick = () => runAi([source], "translate");
+    const summary = el("button", null, t("summarize")); summary.type = "button"; summary.onclick = () => runAi([source]);
+    label.prepend(select); text.append(label, translate, summary);
+  });
+  if (!(r.pages || []).length && !(r.segments || []).length) text.append(el("pre", null, t("emptyText")));  // 말이 없는 음성 등
+}
+
+/* 음성: 파일 카드 바로 아래에 재생바와 지금 재생 중인 대사(원문과 번역)만 보여 준다. 번역은 처음 재생할 때 한 번 받는다. */
+function audioInline(mediaId) {
+  const box = el("div", "audio-inline");
   const player = document.createElement("audio");
   player.controls = true; player.preload = "metadata"; player.className = "audio-player";
-  const status = el("small", "audio-status"), retranslate = el("button", "audio-retry", t("retranslate")); retranslate.type = "button";
-  const summarizeAll = el("button", "audio-retry", t("summarizeAll")); summarizeAll.type = "button";
-  summarizeAll.onclick = () => runAi([{kind: "transcript", mediaId}], "summarize");  // 구간별이 아니라 음성 전체를 한 번에 요약한다
-  const actions = el("div", "audio-actions"); actions.append(summarizeAll, retranslate);
-  const bar = el("div", "audio-bar"); bar.append(status, actions);
-  const list = el("div", "seg-list");
-  const segments = transcript.segments, rows = [], translations = [];
-  segments.forEach(segment => {
-    const row = el("div", "seg-row"), head = el("div", "seg-head");
-    head.append(el("span", "seg-time", `${fmtClock(segment.start)}–${fmtClock(segment.end)}`));
-    const translated = el("div", "seg-translated"); translations.push(translated);
-    row.append(head, el("div", "seg-text", segment.text), translated);  // textContent로 XSS 방지
-    row.onclick = () => { player.currentTime = segment.start; player.play().catch(() => {}); };  // 구간을 누르면 그 시점부터 재생
-    rows.push(row); list.append(row);
-  });
-  let active = -1;
-  const highlight = index => {
-    if (index === active) return;
-    if (active >= 0) rows[active].classList.remove("playing");
-    active = index;
-    if (index >= 0) { rows[index].classList.add("playing"); rows[index].scrollIntoView({block: "nearest", behavior: "smooth"}); }
-  };
-  player.ontimeupdate = () => { const now = player.currentTime; highlight(segments.findIndex(segment => now >= segment.start && now < segment.end)); };
-  player.onended = () => highlight(-1);
-  api(`/api/media/${mediaId}/play-url`).then(result => { player.src = result.url; }).catch(() => { status.textContent = t("failed"); });
+  const now = el("div", "audio-now"), original = el("div", "seg-text"), translatedLine = el("div", "seg-translated");
+  now.append(original, translatedLine); now.hidden = true;
+  const status = el("small", "audio-status");
+  box.append(player, now, status);
+  let segments = [], translations = [], translatedFor = null, pending = false, active = -1;
 
+  const show = index => {  // 지금 구간의 대사만 보인다. 소리가 없는 사이에는 숨긴다
+    active = index;
+    now.hidden = index < 0;
+    if (index >= 0) { original.textContent = segments[index].text; translatedLine.textContent = translations[index] || ""; }
+  };
   async function translateAll() {
+    if (pending || !segments.length || translatedFor === targetLang) return;
     if (!hasTranslateConsent()) {
       if (!confirm(t("translateConsent"))) { status.textContent = t("segmentsNotTranslated"); return; }
       rememberTranslateConsent();
     }
     const target = targetLang, generation = viewGeneration, authToken = token;
-    status.textContent = t("translating"); retranslate.disabled = true;
+    pending = true; status.textContent = t("translating");
     try {
       const result = await api("/api/ai/translate-segments", "POST", {mediaId, target});
       if (viewGeneration !== generation || token !== authToken) return;  // 다른 방·계정으로 바뀌었으면 버린다
-      result.segments.forEach((segment, index) => { translations[index].textContent = segment.translated || ""; });
+      translations = result.segments.map(segment => segment.translated || "");
+      translatedFor = target;
       status.textContent = `${t("translated")} · ${LANG_NAMES[target]}`;
+      if (active >= 0) show(active);
     } catch (error) {
       status.textContent = t(translateErrors[error.status] || "translateFail");
-    } finally { retranslate.disabled = false; }
+    } finally { pending = false; }
   }
-  retranslate.onclick = translateAll;
-  translateAll();
-  box.append(player, bar, list);
-  return {box, player};
+  player.onplay = () => {
+    for (const other of audioPlayers) if (other !== player) other.pause();  // 한 번에 하나만 재생한다
+    audioPlayers.add(player);
+    translateAll();
+  };
+  player.ontimeupdate = () => {
+    const nowTime = player.currentTime, index = segments.findIndex(segment => nowTime >= segment.start && nowTime < segment.end);
+    if (index !== active) show(index);
+  };
+  player.onended = () => show(-1);
+  api(`/api/media/${mediaId}/transcript`).then(r => { segments = r.segments || []; }).catch(() => { status.textContent = t("failed"); });
+  api(`/api/media/${mediaId}/play-url`).then(r => { player.src = r.url; }).catch(() => { status.textContent = t("failed"); });
+  return box;
 }
 
-async function openDocument(mediaId, filename, ext) {
-  try {
-    const r = await api(`/api/media/${mediaId}/transcript`);
-    const text = el("div", "file-text");
-    (r.pages || []).forEach((page, i) => {
-      if (r.pages.length > 1) text.append(el("h4", null, `${t("pageN")} ${i + 1}`));
-      const pre = el("pre", null, page || t("emptyText"));
-      // 번역 버튼은 본문 위에 둔다. 긴 페이지에서도 스크롤 없이 바로 보이고, 번역은 버튼 아래(원문 위)에 붙는다.
-      if (page && page.trim()) text.append(pageTranslateButton(mediaId, i + 1, pre));
-      text.append(pre);
-      pageReview(mediaId, i + 1, pre, r);
-    });
-    let audio = null;
-    if (AUDIO_EXTENSIONS.includes((ext || "").toLowerCase()) && (r.segments || []).length) {
-      const view = audioView(mediaId, r);  // 음성: 재생기와 구간별 번역을 함께 보여 준다
-      text.append(view.box);
-      audio = view.player;
-    } else {
-      (r.segments || []).forEach(segment => {
-        const label = el("label", null, `${segment.start}–${segment.end}초 · ${segment.text}`);
-        const source = {kind:"segment", mediaId, start:segment.start, end:segment.end};
-        const select = document.createElement("input"); select.type = "checkbox";
-        select.onchange = () => select.checked ? aiSelections.set(`${mediaId}:${segment.start}`, source) : aiSelections.delete(`${mediaId}:${segment.start}`);
-        const translate = el("button", null, t("translate")); translate.type = "button"; translate.onclick = () => runAi([source], "translate");
-        const summary = el("button", null, t("summarize")); summary.type = "button"; summary.onclick = () => runAi([source]);
-        label.prepend(select); text.append(label, translate, summary);
-      });
-    }
-    if (!(r.pages || []).length && !(r.segments || []).length) text.append(el("pre", null, t("emptyText")));  // 말이 없는 음성 등
-    openDocPanel(filename, text, mediaId, audio);
-  } catch (e) { toast(t("failed")); }
-}
-
-function fileCard(m) {
+function fileCard(m, sender) {
   const cardRoomId = currentRoom?.roomId, cardGeneration = viewGeneration;
   const box = el("div", "file");
   const top = el("div", "file-top");
@@ -135,9 +125,11 @@ function fileCard(m) {
   const bar = el("div", "bar"), fill = el("i"); bar.append(fill);
   const msg = el("div", "file-msg");
   const act = el("div", "file-act");
-  box.append(top, bar, msg, act);
+  const text = el("div", "file-text"); text.hidden = true;  // 문서 본문은 이 칸(파일 카드 바로 아래)에서 본다
+  const audioHost = el("div", "audio-host"); audioHost.hidden = true;  // 음성 재생바는 이 칸에 둔다
+  box.append(top, bar, msg, act, audioHost, text);
 
-  let pollFailures = 0;
+  let loaded = false, audioBuilt = false, pollFailures = 0;
   const isCurrent = () => cards[m.mediaId] === update && currentRoom?.roomId === cardRoomId && viewGeneration === cardGeneration;
   function schedulePoll(delay) {
     clearTimeout(filePollers.get(m.mediaId));
@@ -154,7 +146,23 @@ function fileCard(m) {
       }
     }, delay));
   }
-  function toggleText() { openDocument(m.mediaId, m.filename, m.ext); }
+  async function toggleText(btn) {
+    if (!text.hidden) { text.hidden = true; btn.textContent = t("viewText"); return; }
+    if (!loaded) {
+      try { await fillDocument(text, m.mediaId); loaded = true; }
+      catch (e) { toast(t("failed")); return; }
+    }
+    text.hidden = false; btn.textContent = t("hideText");
+  }
+  async function removeFile(btn) {
+    if (!confirm(t("fileDeleteConfirm"))) return;
+    btn.disabled = true;
+    try {
+      await api(`/api/files/${m.mediaId}`, "DELETE");
+      toast(t("fileDeleted"));
+      update({ status: "DELETED", progress: 100, errorCode: null, needsOcr: false });
+    } catch { toast(t("failed")); btn.disabled = false; }
+  }
   function update(s) {
     clearTimeout(filePollers.get(m.mediaId)); filePollers.delete(m.mediaId);
     if (["PENDING", "PROCESSING", "UPLOADING", "UPLOADED"].includes(s.status)) {
@@ -162,6 +170,7 @@ function fileCard(m) {
     }
     st.textContent = t("st" + s.status); st.dataset.s = s.status;
     const busy = s.status === "PENDING" || s.status === "PROCESSING";
+    if (busy) loaded = false;
     bar.style.display = busy ? "" : "none"; fill.style.width = s.progress + "%";
     msg.className = "file-msg"; msg.textContent = "";
     act.replaceChildren();
@@ -179,10 +188,24 @@ function fileCard(m) {
       msg.textContent = t("fe_RETRYING");
     } else if (s.status === "DELETED") {
       msg.textContent = t("fileDeleted");
+      text.hidden = true; audioHost.hidden = true; audioHost.replaceChildren();
+      stopAllAudio();
     } else if (s.status === "COMPLETED") {
-      refreshFiles();
       if (s.needsOcr) msg.textContent = t("needsOcrMsg");
-      const b = el("button", null, t("viewText")); b.type = "button"; b.onclick = () => toggleText(); act.append(b);
+      if (m.ext === "pdf") {  // PDF: 원본 보기, 전체·페이지 번역과 요약, 본문 보기. 모두 떠 있는 창으로 열린다
+        for (const button of pdfButtons(m)) act.append(button);
+      } else if (isAudioExt(m.ext)) {
+        if (!audioBuilt) { audioHost.replaceChildren(audioInline(m.mediaId)); audioBuilt = true; }
+        audioHost.hidden = false;
+        const all = el("button", null, t("summarizeAll")); all.type = "button";
+        all.onclick = () => runAi([{kind: "transcript", mediaId: m.mediaId}], "summarize");  // 구간별이 아니라 음성 전체를 한 번에 요약한다
+        act.append(all);
+      } else {
+        const b = el("button", null, text.hidden ? t("viewText") : t("hideText")); b.type = "button"; b.onclick = () => toggleText(b); act.append(b);
+      }
+      if (sender && sender === me) {  // 올린 사람만 지울 수 있다
+        const remove = el("button", "danger", t("fileDelete")); remove.type = "button"; remove.onclick = () => removeFile(remove); act.append(remove);
+      }
     }
   }
   cards[m.mediaId] = update;

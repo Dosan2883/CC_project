@@ -1,12 +1,7 @@
-/* 왼쪽 방 목록 접기/펼치기, 오른쪽 패널(문서 보기 · 요약 목록). 화면 배치와 요약 목록 조회만 다룬다. */
+/* 왼쪽 방 목록 접기/펼치기, 오른쪽 요약 목록 패널(접기/펼치기). 문서와 음성은 채팅의 파일 카드 바로 아래에서 보므로 패널에는 요약 목록만 둔다. */
 let sideCollapsed = false;
-let docOpen = false;          // 오른쪽 패널이 펼쳐져 있는지 (접으면 오른쪽 가장자리 버튼 줄만 남는다)
-let panelView = "doc";        // "doc" | "files" | "summaries"
-let docTitleText = "";
-let docAudio = null;          // 패널에서 재생 중인 음성. 패널 내용을 바꾸거나 닫으면 멈춘다
-let docMediaId = null;        // 지금 패널에 열려 있는 문서
+let docOpen = false;          // 오른쪽 요약 목록 패널이 펼쳐져 있는지 (접으면 오른쪽 가장자리 버튼 줄만 남는다)
 let summaryGeneration = 0;
-let fileGeneration = 0;
 try { sideCollapsed = localStorage.getItem("sideCollapsed") === "1"; } catch { /* 저장소를 못 쓰면 기본값 */ }
 
 function inRoom() { return typeof currentRoom !== "undefined" && !!currentRoom; }
@@ -22,107 +17,19 @@ function applyPanels() {
   $("sideOpen").title = t("sideOpen");
   $("docPanel").hidden = state === "closed";
   $("docPanel").dataset.state = state;
-  $("docFold").textContent = docOpen ? "▶" : "◀";
+  $("docFold").textContent = docOpen ? "→" : "←";  // 열려 있으면 오른쪽으로 접고, 접혀 있으면 왼쪽으로 펼친다
   $("docFold").title = t(docOpen ? "docFold" : "docUnfold");
-  $("sumToggle").title = t("summaryList");
-  $("fileToggle").title = t("fileList");
-  $("docBody").hidden = panelView !== "doc";
-  $("fileView").hidden = panelView !== "files";
-  $("sumView").hidden = panelView !== "summaries";
-  $("docTitle").textContent = panelView === "summaries" ? t("summaryList") : panelView === "files" ? t("fileList") : docTitleText;
-  $("docHint").textContent = t("docHint");
-  $("docHint").hidden = panelView !== "doc" || $("docBody").children.length > 0;
+  $("docTitle").textContent = t("summaryList");
 }
 
-function stopDocAudio() {
-  if (docAudio) { docAudio.pause(); docAudio = null; }
-}
-
-function openDocPanel(title, content, mediaId = null, audio = null) {
-  stopDocAudio();
-  docAudio = audio;
-  docTitleText = title;
-  docMediaId = mediaId;
-  panelView = "doc";
-  $("docBody").replaceChildren(content);
-  content.hidden = false;
-  docOpen = true;
-  applyPanels();
-}
-
-function closeDocPanel() {  // 방을 바꾸거나 나갈 때: 내용을 비우고 접는다
-  stopDocAudio();
-  summaryGeneration++; fileGeneration++;
-  $("docBody").replaceChildren();
+function closeDocPanel() {  // 방을 바꾸거나 나갈 때: 목록을 비우고 접고, 재생 중인 음성은 멈춘다
+  if (typeof stopAllAudio === "function") stopAllAudio();
+  if (typeof closeAllFloatWindows === "function") closeAllFloatWindows();
+  summaryGeneration++;
   $("sumView").replaceChildren();
-  $("fileView").replaceChildren();
-  docTitleText = "";
-  docMediaId = null;
-  panelView = "doc";
   docOpen = false;
   applyPanels();
 }
-
-/* ---------- 문서 목록 ---------- */
-async function deleteFile(file) {
-  await api(`/api/files/${file.mediaId}`, "DELETE");
-  toast(t("fileDeleted"));
-  if (docMediaId === file.mediaId) { stopDocAudio(); $("docBody").replaceChildren(); docTitleText = ""; docMediaId = null; }  // 열려 있던 본문도 닫는다
-  if (typeof cards !== "undefined" && cards[file.mediaId]) cards[file.mediaId]({status: "DELETED", progress: 100, errorCode: null, needsOcr: false});
-  refreshFiles();
-}
-
-const FILE_KINDS = [["document", "kindDocument"], ["image", "kindImage"], ["audio", "kindAudio"], ["video", "kindVideo"]];
-let fileKind = "document", fileKindChosen = false, lastFiles = [];
-
-function renderFiles(files) {
-  lastFiles = files;
-  const box = $("fileView");
-  box.replaceChildren();
-  if (!fileKindChosen && files.length) fileKind = files[0].kind;  // 처음에는 가장 최근 파일의 종류를 보여 준다
-  const tabs = el("div", "tabs file-tabs");
-  for (const [kind, label] of FILE_KINDS) {
-    const count = files.filter(file => file.kind === kind).length;
-    const tab = el("button", kind === fileKind ? "on" : null, `${t(label)} (${count})`); tab.type = "button";
-    tab.onclick = () => { fileKind = kind; fileKindChosen = true; renderFiles(lastFiles); };
-    tabs.append(tab);
-  }
-  box.append(tabs);
-  const shown = files.filter(file => file.kind === fileKind);
-  if (!shown.length) { box.append(el("div", "hint", t("fileEmptyKind"))); return; }
-  for (const file of shown) {
-    const item = el("div", "sum-item"), act = el("div", "sum-act");
-    const ready = file.status === "COMPLETED";
-    const meta = [(file.ext || "").toUpperCase(), fmtSize(file.size), file.sender, new Date(file.sentAt).toLocaleString(), t("st" + file.status)];
-    const open = el("button", null, t("viewText")); open.type = "button"; open.disabled = !ready;
-    open.onclick = () => openDocument(file.mediaId, file.filename, file.ext);
-    act.append(open);
-    if (file.sender === me) {  // 올린 사람만 지울 수 있다
-      const remove = el("button", "danger", t("fileDelete")); remove.type = "button";
-      remove.onclick = async () => {
-        if (!confirm(t("fileDeleteConfirm"))) return;
-        try { await deleteFile(file); } catch { toast(t("failed")); }
-      };
-      act.append(remove);
-    }
-    item.append(el("strong", null, file.filename), el("small", null, meta.filter(Boolean).join(" · ")), act);
-    box.append(item);
-  }
-}
-
-async function loadFiles() {
-  if (!inRoom()) return;
-  const roomId = currentRoom.roomId, generation = ++fileGeneration, authToken = token;
-  try {
-    const files = await api(`/api/rooms/${roomId}/files`);
-    if (generation !== fileGeneration || !inRoom() || currentRoom.roomId !== roomId || token !== authToken) return;
-    renderFiles(files);
-  } catch {
-    if (generation === fileGeneration) $("fileView").replaceChildren(el("div", "hint", t("failed")));
-  }
-}
-
-function refreshFiles() { if (docOpen && panelView === "files") loadFiles(); }
 
 /* ---------- 요약 목록 ---------- */
 function summaryMeta(entry) {
@@ -194,7 +101,7 @@ async function loadSummaries() {
   }
 }
 
-function refreshSummaries() { if (docOpen && panelView === "summaries") loadSummaries(); }
+function refreshSummaries() { if (docOpen) loadSummaries(); }
 
 /* ---------- 버튼 ---------- */
 $("sideFold").onclick = $("sideOpen").onclick = () => {
@@ -202,17 +109,9 @@ $("sideFold").onclick = $("sideOpen").onclick = () => {
   try { localStorage.setItem("sideCollapsed", sideCollapsed ? "1" : "0"); } catch { /* 저장 실패는 무시 */ }
   applyPanels();
 };
-$("docFold").onclick = () => { docOpen = !docOpen; applyPanels(); };
-$("fileToggle").onclick = () => {
-  if (docOpen && panelView === "files") { docOpen = false; applyPanels(); return; }
-  panelView = "files"; docOpen = true;
+$("docFold").onclick = () => {
+  docOpen = !docOpen;
   applyPanels();
-  loadFiles();
-};
-$("sumToggle").onclick = () => {
-  if (docOpen && panelView === "summaries") { docOpen = false; applyPanels(); return; }
-  panelView = "summaries"; docOpen = true;
-  applyPanels();
-  loadSummaries();
+  if (docOpen) loadSummaries();  // 펼칠 때마다 최신 요약 목록을 읽는다
 };
 applyPanels();
