@@ -31,7 +31,7 @@ Resources:
   Queue:
     Type: AWS::SQS::Queue
     Properties:
-      VisibilityTimeout: 540
+      VisibilityTimeout: 5400
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt DeadLetters.Arn
         maxReceiveCount: 5
@@ -41,7 +41,7 @@ Resources:
       Runtime: python3.12
       Handler: handler.handler
       Role: !Ref RoleArn
-      Timeout: 90
+      Timeout: 900
       MemorySize: 512
       Code:
         S3Bucket: !Ref CodeBucket

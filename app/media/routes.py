@@ -190,6 +190,15 @@ def room_files(room_id: str, user: str = Depends(current_user)):
     return media_svc.list_room_files(room_id)
 
 
+@router.get("/api/media/{media_id}/original")
+def original(media_id: str, user: str = Depends(current_user)):
+    asset = media_member(media_id, user)
+    if asset["status"] == "UPLOADING":
+        raise HTTPException(409, "NOT_UPLOADED")
+    types = {"pdf":"application/pdf", "png":"image/png", "jpg":"image/jpeg", "jpeg":"image/jpeg"}
+    return Response(media_svc.original(media_id), media_type=types.get(asset["ext"], "application/octet-stream"), headers={"Cache-Control":"no-store", "X-Content-Type-Options":"nosniff"})
+
+
 @router.get("/api/media/{media_id}")
 def media_status(media_id: str, user: str = Depends(current_user)):
     asset = media_member(media_id, user, allow_deleted=True)

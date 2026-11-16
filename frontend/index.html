@@ -97,6 +97,11 @@
         <button id="deleteRoom" class="ghost danger" data-i="deleteRoom" hidden></button>
       </div>
       <div id="log"></div>
+      <aside id="summaryPanel" class="summary-panel" hidden>
+        <div class="summary-toolbar"><strong>방 요약 파일</strong><button id="summaryAdd" type="button" aria-label="요약 자료 선택 시작">+</button><button id="summaryClose" type="button">닫기</button></div>
+        <div id="summarySelection" hidden><p id="summaryCount"></p><button id="summaryGenerate" type="button">선택 자료 요약 생성</button><button id="summaryCancel" type="button">취소</button></div>
+        <div id="summaryList"></div><div id="summaryResult"></div>
+      </aside>
       <form id="form">
         <div class="attach-wrap">
           <button type="button" id="attach">+</button>

@@ -62,6 +62,7 @@ class RoomRepository:
                 Change("ROOM_NAMES", room["key"], None, {"roomId": room["roomId"]}),
                 Change("CATALOG", "ROOM#" + room["roomId"], None, room),
                 Change("ROOM#" + room["roomId"], "MEMBER#" + member["user"], None, member),
+                Change("ROOM_FOLDERS", room["roomId"], None, {"status":"PENDING"}),
             ])
         except Conflict:
             raise HTTPException(409, "room name already exists")

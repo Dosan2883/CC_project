@@ -36,6 +36,12 @@ class LocalStorage:
     def get(self, key: str) -> bytes:
         return self._path(key).read_bytes()
 
+    def optional(self, key):
+        try:
+            return self.get(key)
+        except FileNotFoundError:
+            return None
+
     def put_original(self, key, data):
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +76,15 @@ class S3Storage:
         response = self.client.get_object(Bucket=self.bucket, Key=key)
         with response["Body"] as body:
             return body.read()
+
+    def optional(self, key):
+        from botocore.exceptions import ClientError
+        try:
+            return self.get(key)
+        except ClientError as error:
+            if error.response["Error"]["Code"] in ("NoSuchKey", "NotFound", "404"):
+                return None
+            raise
 
     def get_limited(self, key, limit):
         response = self.client.get_object(Bucket=self.bucket, Key=key, Range=f"bytes=0-{limit}")

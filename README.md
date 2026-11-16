@@ -210,6 +210,11 @@ tests/                     통합·영속성·워커·이벤트·프런트엔드
 
 ## 검증
 
+2026-11-16: [저장 결과 재사용·PDF 지연 추출·방 요약 패널 변경](docs/result-reuse-20261116.md).
+업로드 후 원본 보기만으로는 추출·AI를 실행하지 않습니다. 번역·요약 요청 때 기존 결과를 먼저 확인합니다.
+동일 작업의 동시 요청은 공유하며, 방 요약은 현재 멤버가 오른쪽 패널에서 조회합니다.
+가입 화면에서 선택한 UI 언어가 최초 번역 대상 언어로 저장됩니다.
+
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v

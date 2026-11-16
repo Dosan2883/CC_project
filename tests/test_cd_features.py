@@ -168,7 +168,7 @@ class FeatureChecks(unittest.TestCase):
         self.media.storage.put("text.json", json.dumps({"pages":["old"], "version":1}).encode())
         self.body["sources"] = [{"kind":"page", "mediaId":"f", "page":1}]
         job = self.jobs.submit(self.body, "owner")
-        self.media.storage.put("text.json", json.dumps({"pages":["new"], "version":2}).encode())
+        self.media.storage.put(self.media.asset("f")["transcriptKey"], json.dumps({"pages":["new"], "version":2}).encode())
         with self.assertRaises(HTTPException) as error:
             self.jobs.get(job["jobId"], "owner")
         self.assertEqual(error.exception.status_code, 409)

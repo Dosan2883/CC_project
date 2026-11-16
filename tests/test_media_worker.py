@@ -74,7 +74,7 @@ class WorkerChecks(unittest.TestCase):
         self.assertEqual(self.service.status(media_id)["status"], "CANCELLED")
         self.assertIsNone(self.service.asset(media_id)["transcriptKey"])
 
-    def test_completion_persists_message_and_job_even_if_queue_send_fails(self):
+    def test_explicit_extraction_is_durable_even_if_queue_send_fails(self):
         upload = self.service.request_upload("room", "owner", "demo.txt", 5)
         media_id = upload["mediaId"]
         with self.assertLogs("app.media.service", level="ERROR"), patch.object(self.service.queue, "send", side_effect=RuntimeError("queue unavailable")):
@@ -84,6 +84,8 @@ class WorkerChecks(unittest.TestCase):
             else:
                 token = parse_qs(urlparse(upload["uploadUrl"]).query)["token"][0]
                 self.service.receive_upload(media_id, token, b"hello")
+            self.assertIsNone(self.db.get("MEDIA_JOBS", media_id))
+            self.service.start_job(media_id)
         self.assertEqual(self.db.get("MEDIA_JOBS", media_id).value["status"], "PENDING")
         self.assertEqual(len(MessageStore(self.db, self.rooms).after("room", 0)), 1)
         reopened = SQLiteDatabase(self.db.path)

@@ -65,7 +65,7 @@ class AuthService:
     def __init__(self, repo: AccountRepo, signer: TokenSigner, throttle):
         self.repo, self.signer, self.throttle = repo, signer, throttle
 
-    def signup(self, nickname: str, password: str) -> tuple[str, str]:
+    def signup(self, nickname: str, password: str, ui_locale=None) -> tuple[str, str]:
         nick = nickname.strip()
         if not NICK_RE.fullmatch(nick):
             raise AuthError(400, "INVALID_NICKNAME")
@@ -74,7 +74,13 @@ class AuthService:
         salt = os.urandom(16)
         record = {"nickname": nick, "salt": salt, "iterations": PBKDF2_ITERATIONS,
                   "pwHash": hash_password(password, salt), "createdAt": int(time.time() * 1000)}
-        if not self.repo.create(nick.casefold(), record):  # 대소문자만 다른 이름도 같은 닉네임으로 본다
+        initial = None
+        if ui_locale is not None:
+            if ui_locale not in ("ko", "en", "ja"):
+                raise AuthError(422, "INVALID_LANGUAGE")
+            initial = {"uiLocale":ui_locale, "sourceLanguage":ui_locale, "defaultTargetLanguage":ui_locale, "preferredSubtitleLanguage":ui_locale}
+        created = self.repo.create(nick.casefold(), record, preferences=initial) if initial is not None else self.repo.create(nick.casefold(), record)
+        if not created:
             raise AuthError(409, "NICKNAME_TAKEN")
         return nick, self.signer.issue(nick)
 

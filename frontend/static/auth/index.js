@@ -26,7 +26,7 @@ $("authForm").onsubmit = async e => {
     if (password !== $("authPw2").value) return fail("errPwMismatch");
   }
   try {
-    const r = await api(`/api/auth/${authMode}`, "POST", { nickname, password });
+    const r = await api(`/api/auth/${authMode}`, "POST", { nickname, password, ...(authMode === "signup" ? {uiLocale:locale} : {}) });
     $("authPw").value = $("authPw2").value = "";
     await startSession(r.token, r.nickname);
   } catch (ex) {
@@ -47,6 +47,7 @@ async function startSession(tok, nickname) {
   clearInterval(roomsTimer); loadRooms(); roomsTimer = setInterval(loadRooms, 3000);
 }
 function logout(expired) {
+  resetAiPanel();
   cancelRoomLoads(); cancelApiRequests(); viewGeneration++;
   clearFilePolling();
   closeSocket(); currentRoom = null; token = null; closeDocPanel(); me = null; tokenStore.set(null);

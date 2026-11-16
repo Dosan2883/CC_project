@@ -1,6 +1,7 @@
 """기능별 라우터와 정적 화면을 조립하는 FastAPI 애플리케이션."""
 import asyncio
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -19,7 +20,12 @@ from app.users.routes import router as users_router
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     runtime.loop = asyncio.get_running_loop()
+    async def folders():
+        while True:
+            await asyncio.to_thread(runtime.room_folders.recover)
+            await asyncio.sleep(30)
     await runtime.manager.start()
+    folder_task = asyncio.create_task(folders())
     if RUN_MEDIA_WORKER:
         runtime.media_svc.queue.start()
     if not runtime.ai_queue_url:
@@ -27,6 +33,9 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        folder_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await folder_task
         if not runtime.ai_queue_url:
             await asyncio.to_thread(runtime.ai_jobs.queue.stop)
         if RUN_MEDIA_WORKER:

@@ -36,6 +36,7 @@ function pageTranslateButton(mediaId, page, pre) {
 
 /* 문서 본문을 오른쪽 패널에 연다. 파일 카드의 본문 보기와 문서 목록이 함께 쓴다. 열 때마다 저장된 최신 추출 결과를 읽는다. */
 const AUDIO_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac"];
+const TRANSCRIPT_EXTENSIONS = [...AUDIO_EXTENSIONS, "mp4", "webm"];
 const fmtClock = seconds => { const whole = Math.max(0, Math.floor(seconds)); return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`; };
 
 /* 음성: 재생기 + 구간 목록. 재생 중인 구간에 불이 들어오고, 각 구간 아래에 번역 대상 언어의 번역이 항상 보인다. */
@@ -157,7 +158,7 @@ function fileCard(m) {
   function toggleText() { openDocument(m.mediaId, m.filename, m.ext); }
   function update(s) {
     clearTimeout(filePollers.get(m.mediaId)); filePollers.delete(m.mediaId);
-    if (["PENDING", "PROCESSING", "UPLOADING", "UPLOADED"].includes(s.status)) {
+    if (["PENDING", "PROCESSING", "UPLOADING"].includes(s.status)) {
       schedulePoll(2000);
     }
     st.textContent = t("st" + s.status); st.dataset.s = s.status;
@@ -165,6 +166,26 @@ function fileCard(m) {
     bar.style.display = busy ? "" : "none"; fill.style.width = s.progress + "%";
     msg.className = "file-msg"; msg.textContent = "";
     act.replaceChildren();
+    const preview = el("button", null, "원본 보기"); preview.type = "button";
+    preview.onclick = () => previewOriginal(m.mediaId, m.ext, m.filename);
+    if (s.status !== "UPLOADING") act.append(preview);
+    if (["UPLOADED", "COMPLETED"].includes(s.status)) {
+      if (TRANSCRIPT_EXTENSIONS.includes((m.ext || "").toLowerCase())) {
+        const b = el("button", null, "전체 녹취 요약"); b.type = "button";
+        b.onclick = () => runAi([{kind:"transcript", mediaId:m.mediaId}], "summarize"); act.append(b);
+      } else {
+        for (const [label, kind] of [["전체 문서 번역", "translate"], ["전체 문서 요약", "summarize"]]) {
+          const b = el("button", null, label); b.type = "button"; b.onclick = () => runAi([{kind:"document", mediaId:m.mediaId}], kind); act.append(b);
+        }
+        for (const [label, kind] of [["페이지 번역", "translate"], ["페이지 요약", "summarize"]]) {
+          const b = el("button", null, label); b.type = "button"; b.onclick = () => {
+            const page = Number(prompt("페이지 번호", "1"));
+            if (!Number.isInteger(page) || page < 1 || page > 300) return toast("올바른 페이지 번호를 입력하세요.");
+            runAi([{kind:"page", mediaId:m.mediaId, page}], kind);
+          }; act.append(b);
+        }
+      }
+    }
     if (s.status === "FAILED") {
       msg.classList.add("err"); msg.textContent = t("fe_" + s.errorCode) || t("failed");
       const b = el("button", null, t("retry")); b.type = "button";
@@ -186,7 +207,7 @@ function fileCard(m) {
     }
   }
   cards[m.mediaId] = update;
-  update({ status: "PENDING", progress: 0, errorCode: null, needsOcr: false });
+  update({ status: "UPLOADED", progress: 0, errorCode: null, needsOcr: false });
   // 기록에서 다시 불러온 카드도 현재 처리 상태를 보여 준다.
   api(`/api/media/${m.mediaId}`).then(state => { if (isCurrent()) update(state); }).catch(error => {
     if (isCurrent() && error.status !== 404 && error.status !== 403) { pollFailures++; schedulePoll(Math.min(2000 * 2 ** Math.min(pollFailures, 4), 30000)); }
@@ -207,6 +228,5 @@ $("fileInput").onchange = async e => {
     const res = await fetch(meta.uploadUrl, { method: meta.method, headers: meta.headers, body: file });
     if (!res.ok) throw Object.assign(new Error(), { code: (await res.json().catch(() => ({}))).detail });
     await api(meta.completeUrl, "POST");
-    await api(`/api/media/${meta.mediaId}/process`, "POST");
   } catch (err) { toast(t(uploadErrors[err.code] || "eUpFail")); }
 };

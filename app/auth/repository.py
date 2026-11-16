@@ -12,9 +12,12 @@ class AccountRepository:
         record = self.db.get("USER#" + key, "ACCOUNT")
         return record.value if record else None
 
-    def create(self, key, record):
+    def create(self, key, record, preferences=None):
         try:
-            self.db.commit([Change("USER#" + key, "ACCOUNT", None, record)])
+            changes = [Change("USER#" + key, "ACCOUNT", None, record)]
+            if preferences is not None:
+                changes.append(Change("USER#" + key, "PREFERENCES", None, preferences))
+            self.db.commit(changes)
             return True
         except Conflict:
             return False

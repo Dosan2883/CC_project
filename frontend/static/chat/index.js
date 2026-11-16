@@ -75,6 +75,7 @@ window.addEventListener("focus", markVisibleRead);
 function enterRoom(r) {
   if (currentRoom && currentRoom.roomId === r.roomId && ws) { $("app").classList.add("in-room"); return; }
   closeSocket();
+  resetAiPanel();
   currentRoom = r; viewGeneration++; closeDocPanel(); lastSeq = 0; retry = 0; prevMsg = null;
   aiSelections.clear();
   loadOutbox(r.roomId);
@@ -98,6 +99,7 @@ function closeSocket() {
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
 }
 function leaveView() {  // 방을 떠나지 않고 화면만 닫는다
+  resetAiPanel();
   viewGeneration++;
   clearFilePolling();
   closeSocket(); currentRoom = null; closeDocPanel();
@@ -203,7 +205,8 @@ function addMessage(m) {
   summarizeButton.onclick = () => runAi([{kind:"message", messageSeq:m.messageSeq}], "summarize");
   if (!m.media) {
     const selection = document.createElement("input"); selection.type = "checkbox"; selection.title = "회의 요약에 포함";
-    selection.onchange = () => selection.checked ? aiSelections.set(m.messageSeq, {kind:"message", messageSeq:m.messageSeq}) : aiSelections.delete(m.messageSeq);
+    selection.className = "summary-choice";
+    selection.onchange = () => updateSummarySelection(m.messageSeq, {kind:"message", messageSeq:m.messageSeq}, m.bodyOriginal.length, selection.checked);
     acts.append(selection);
   }
   acts.append(translateButton, summarizeButton);

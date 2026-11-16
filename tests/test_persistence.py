@@ -132,7 +132,7 @@ class DynamoChecks(RepositoryChecks, unittest.TestCase):
     def make_db(self):
         return DynamoDatabase("test-messenger", self.client)
 
-    def test_upload_completion_atomically_saves_file_message_and_pending_job(self):
+    def test_upload_completion_saves_message_then_explicit_extraction(self):
         from app.media.service import MediaService
         from app.media.storage import LocalStorage
         db = self.make_db()
@@ -145,6 +145,7 @@ class DynamoChecks(RepositoryChecks, unittest.TestCase):
             media.receive_upload(upload["mediaId"], token, b"hello")
             media.complete_upload(upload["mediaId"], "owner")
             self.assertEqual(len(MessageStore(db, rooms).after("room", 0)), 1)
-            self.assertEqual(db.get("MEDIA_JOBS", upload["mediaId"]).value["status"], "PENDING")
+            self.assertIsNone(db.get("MEDIA_JOBS", upload["mediaId"]))
+            media.start_job(upload["mediaId"])
             self.assertTrue(media.work(upload["mediaId"]))
             self.assertEqual(media.transcript(upload["mediaId"])["pages"], ["hello"])

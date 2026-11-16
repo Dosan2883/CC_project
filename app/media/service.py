@@ -128,7 +128,7 @@ class MediaService:
             raise MediaError(413, "FILE_TOO_LARGE")
         media_id, token = uuid.uuid4().hex, secrets.token_urlsafe(24)
         asset = {"mediaId": media_id, "roomId": room_id, "uploader": user, "filename": filename,
-                 "ext": ext, "type": ALLOWED_EXT[ext], "size": size, "status": "UPLOADING", "s3Key": "original/" + media_id,
+                 "ext": ext, "type": ALLOWED_EXT[ext], "size": size, "status": "UPLOADING", "s3Key": f"rooms/{room_id}/files/{media_id}/original.{ext}",
                  "uploadTokenHash": hashlib.sha256(token.encode()).hexdigest(), "uploadExpiresAt": time.time() + UPLOAD_TTL,
                  "transcriptKey": None, "detectedLanguages": [], "recognitionModel": None, "createdAt": int(time.time() * 1000)}
         self.db.commit([room.change(room.value, check=True), member.change(member.value, check=True), Change("MEDIA", "ASSET#" + media_id, None, asset)])
@@ -198,10 +198,8 @@ class MediaService:
             room.change({**room.value, "lastMessageSeq": seq}), member.change(member.value, check=True), record.change(asset),
             Change("ROOM#" + asset["roomId"], f"MESSAGE#{seq:020d}", None, message),
             Change("ROOM#" + asset["roomId"], "MEDIA_MESSAGE#" + media_id, None, {"messageSeq": seq}),
-            Change("MEDIA_JOBS", media_id, None, self.new_job(asset)),
         ])
         self.emit(asset)
-        self.enqueue(media_id)
         return asset
 
     @staticmethod
@@ -272,7 +270,25 @@ class MediaService:
         asset = self.asset(media_id)
         if not asset.get("transcriptKey"):
             raise MediaError(409, "NOT_READY")
-        return json.loads(self.storage.get(asset["transcriptKey"]))
+        raw = self.storage.get(asset["transcriptKey"])
+        result = json.loads(raw)
+        prefix = f'rooms/{asset["roomId"]}/files/{media_id}/extracted/'
+        if not asset["transcriptKey"].startswith(prefix):
+            key = prefix + str(result.get("version", 1)) + "/legacy.json"
+            self.storage.put(key, raw)
+            self.db.update("MEDIA", "ASSET#" + media_id, lambda value: {**value, "transcriptKey":key} if value.get("transcriptKey") == asset["transcriptKey"] else value)
+        if asset.get("s3Key") and asset.get("ext") and not asset["s3Key"].startswith(f'rooms/{asset["roomId"]}/files/{media_id}/'):
+            self.original(media_id)
+        return result
+
+    def original(self, media_id):
+        asset = self.asset(media_id)
+        raw = self.storage.get_limited(asset["s3Key"], MAX_BYTES)
+        key = f'rooms/{asset["roomId"]}/files/{media_id}/original.{asset["ext"]}'
+        if key != asset["s3Key"]:
+            self.storage.put(key, raw)
+            self.db.update("MEDIA", "ASSET#" + media_id, lambda value: {**value, "s3Key":key} if value.get("s3Key") == asset["s3Key"] else value)
+        return raw
 
     def emit(self, asset):
         try:
@@ -337,7 +353,7 @@ class MediaService:
                 self.emit(asset)
             result = extract(asset["ext"], self.storage.get_limited(asset["s3Key"], max_bytes_for(asset["ext"])), progress, job.get("ocrLanguage", "auto"))
             result["version"] = asset.get("extractionVersion", 0) + 1
-            key = f'extracted/{asset["mediaId"]}/{lease}.json'
+            key = f'rooms/{asset["roomId"]}/files/{asset["mediaId"]}/extracted/{result["version"]}/{lease}.json'
             self.storage.put(key, json.dumps(result, ensure_ascii=False).encode())
             self.finish(job_id, lease, asset, result, key)
             terminal = True

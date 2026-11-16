@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth.dependencies import current_user
-from app.auth.schemas import Credentials
+from app.auth.schemas import Credentials, Signup
 from app.auth.service import AuthError
 from app.core.runtime import auth
 
@@ -14,9 +14,9 @@ def auth_http(e: AuthError) -> HTTPException:
 
 
 @router.post("/api/auth/signup")
-def signup(body: Credentials):
+def signup(body: Signup):
     try:
-        nickname, token = auth.signup(body.nickname, body.password)
+        nickname, token = auth.signup(body.nickname, body.password, body.uiLocale)
     except AuthError as e:
         raise auth_http(e)
     return {"nickname": nickname, "token": token}

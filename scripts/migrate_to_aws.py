@@ -2,7 +2,7 @@
 
 로컬 모드(SQLite + data 폴더)의 데이터를 DynamoDB와 S3로 복사한다. 원본은 지우지 않고, 이미 AWS에 있는 항목은 덮어쓰지 않는다.
   - SQLite의 records 표(계정, 방, 메시지, 요약 목록 등) → DynamoDB 테이블
-  - data/original, data/extracted, data/ai 의 파일 → S3(같은 키)
+  - data/original, data/extracted, data/ai, data/rooms 의 파일 → S3(같은 키)
 CONFIG 파티션(예전 로컬 서명 키)은 비밀 값이라 복사하지 않는다. AWS 모드는 .env의 AUTH_SECRET을 쓴다.
 설정(.env)은 DATA_BACKEND=dynamodb 상태에서 실행하고, EC2 인스턴스 역할로 쓴다.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 SKIP_PARTITIONS = {"CONFIG"}
-FILE_FOLDERS = ("original", "extracted", "ai")
+FILE_FOLDERS = ("original", "extracted", "ai", "rooms")
 
 
 def copy_records(sqlite_path, dynamodb, table, dry_run=False):

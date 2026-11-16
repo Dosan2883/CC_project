@@ -1,4 +1,14 @@
 main { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .summary-panel { position:fixed; z-index:30; right:0; top:0; bottom:0; width:min(380px, 92vw); padding:16px; background:var(--panel); border-left:1px solid var(--line); overflow:auto; box-shadow:-4px 0 18px #0002; }
+  .summary-panel[hidden] { display:none; }
+  .summary-toolbar { display:flex; align-items:center; gap:8px; }
+  .summary-toolbar strong { flex:1; }
+  #summaryList { display:grid; gap:8px; margin:12px 0; }
+  #summaryList button { white-space:normal; text-align:left; }
+  #summaryResult pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .summary-choice { display:none; }
+  .summary-selecting .summary-choice { display:inline-block; }
+  .summary-selecting .acts { opacity:1; }
   .empty-state { flex:1; display:grid; place-content:center; text-align:center; color:var(--muted); gap:8px; padding:24px; }
   .empty-state .mark { margin:0 auto; width:52px; height:52px; font-size:22px; border-radius:16px; }
   #chat { display:none; flex:1; min-height:0; flex-direction:column; }

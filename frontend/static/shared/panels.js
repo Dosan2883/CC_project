@@ -5,7 +5,7 @@ let panelView = "doc";        // "doc" | "files" | "summaries"
 let docTitleText = "";
 let docAudio = null;          // 패널에서 재생 중인 음성. 패널 내용을 바꾸거나 닫으면 멈춘다
 let docMediaId = null;        // 지금 패널에 열려 있는 문서
-let summaryGeneration = 0;
+let docSummaryGeneration = 0;
 let fileGeneration = 0;
 try { sideCollapsed = localStorage.getItem("sideCollapsed") === "1"; } catch { /* 저장소를 못 쓰면 기본값 */ }
 
@@ -52,7 +52,7 @@ function openDocPanel(title, content, mediaId = null, audio = null) {
 
 function closeDocPanel() {  // 방을 바꾸거나 나갈 때: 내용을 비우고 접는다
   stopDocAudio();
-  summaryGeneration++; fileGeneration++;
+  docSummaryGeneration++; fileGeneration++;
   $("docBody").replaceChildren();
   $("sumView").replaceChildren();
   $("fileView").replaceChildren();
@@ -184,13 +184,13 @@ function renderSummaries(roomId, entries) {
 
 async function loadSummaries() {
   if (!inRoom()) return;
-  const roomId = currentRoom.roomId, generation = ++summaryGeneration, authToken = token;
+  const roomId = currentRoom.roomId, generation = ++docSummaryGeneration, authToken = token;
   try {
     const entries = await api(`/api/ai/rooms/${roomId}/summaries`);
-    if (generation !== summaryGeneration || !inRoom() || currentRoom.roomId !== roomId || token !== authToken) return;
+    if (generation !== docSummaryGeneration || !inRoom() || currentRoom.roomId !== roomId || token !== authToken) return;
     renderSummaries(roomId, entries);
   } catch {
-    if (generation === summaryGeneration) $("sumView").replaceChildren(el("div", "hint", t("failed")));
+    if (generation === docSummaryGeneration) $("sumView").replaceChildren(el("div", "hint", t("failed")));
   }
 }
 

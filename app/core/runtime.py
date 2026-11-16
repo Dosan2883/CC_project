@@ -50,6 +50,8 @@ def notify_room(room_id, payload):
 
 
 storage = S3Storage(config.S3_BUCKET, config.aws_client("s3")) if config.S3_BUCKET else LocalStorage(config.DATA_DIR)
+from app.rooms.folders import RoomFolders
+room_folders = RoomFolders(db, room_repo, storage)
 sqs = config.aws_client("sqs") if config.MEDIA_QUEUE_URL else None
 media_svc = MediaService(storage, notify_room, db, room_repo, sqs, config.MEDIA_QUEUE_URL)
 # 번역은 업로드한 문서의 추출 글자도 읽어야 해서 media_svc가 만들어진 뒤에 구성한다.

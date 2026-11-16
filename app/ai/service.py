@@ -95,6 +95,11 @@ class TranslationService:
         self.db, self.rooms, self.translator, self.hourly_limit, self.media = db, rooms, translator, hourly_limit, media
 
     def translate_message(self, room_id, seq, target, user):
+        if getattr(self, "jobs", None):
+            return self.jobs.sync_translation({"kind":"message", "messageSeq":seq}, room_id, target, user)
+        return self._translate_message(room_id, seq, target, user)
+
+    def _translate_message(self, room_id, seq, target, user):
         if target not in LANGUAGE_NAMES:
             raise HTTPException(422, "INVALID_LANGUAGE")
         self.rooms.require_member(room_id, user)
@@ -181,6 +186,16 @@ class TranslationService:
         return result(values)
 
     def translate_page(self, media_id, page, target, user):
+        if getattr(self, "jobs", None):
+            try:
+                asset = self.media.asset(media_id)
+                self.rooms.require_member(asset["roomId"], user)
+            except (MediaError, HTTPException):
+                raise HTTPException(404, "MEDIA_NOT_FOUND")
+            return self.jobs.sync_translation({"kind":"page", "mediaId":media_id, "page":page}, asset["roomId"], target, user)
+        return self._translate_page(media_id, page, target, user)
+
+    def _translate_page(self, media_id, page, target, user):
         """업로드한 문서의 한 페이지를 번역한다. 서버가 저장된 추출 글자를 직접 읽는다."""
         if target not in LANGUAGE_NAMES:
             raise HTTPException(422, "INVALID_LANGUAGE")
@@ -192,6 +207,7 @@ class TranslationService:
         try:
             transcript = self.media.transcript(media_id)
             pages = transcript["pages"]
+            asset = self.media.asset(media_id)
         except MediaError as error:
             raise HTTPException(error.status, error.code)
         if not 1 <= page <= len(pages):

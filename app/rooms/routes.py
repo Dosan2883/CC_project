@@ -4,11 +4,11 @@ import asyncio
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 
 from app.auth.dependencies import current_user
 from app.auth.service import hash_password
-from app.core.runtime import manager, room_repo, room_throttle
+from app.core.runtime import manager, room_repo, room_throttle, room_folders
 from app.rooms.schemas import CreateRoom, EnterPrivate
 from app.rooms.service import check_room_password, find_by_name, get_room, newest_first, normalize, room_view
 
@@ -43,7 +43,7 @@ def public_rooms(user: str = Depends(current_user)):
 
 
 @router.post("/api/rooms")
-async def create_room(body: CreateRoom, user: str = Depends(current_user)):
+async def create_room(body: CreateRoom, background_tasks: BackgroundTasks, user: str = Depends(current_user)):
     name = normalize(body.name)
     if not name:
         raise HTTPException(400, "name is required")
@@ -59,6 +59,7 @@ async def create_room(body: CreateRoom, user: str = Depends(current_user)):
         room["salt"] = os.urandom(16)
         room["pwHash"] = hash_password(body.password, room["salt"])
     await asyncio.to_thread(room_repo.create, room)
+    background_tasks.add_task(room_folders.ensure, room["roomId"])
     return await asyncio.to_thread(room_view, room["roomId"], user)
 
 
