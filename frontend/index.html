@@ -35,7 +35,7 @@
 
 <div id="app">
   <aside>
-    <div class="brand"><div class="mark">A</div><strong id="title"></strong><button type="button" id="sideFold" class="ghost fold-btn">◀</button></div>
+    <div class="brand"><div class="mark">A</div><strong id="title"></strong><button type="button" id="sideFold" class="ghost fold-btn">←</button></div>
     <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
     <details id="preferencesPanel">
       <summary data-i="languageSettings"></summary>
@@ -76,7 +76,7 @@
   </aside>
 
   <main>
-    <button type="button" id="sideOpen" class="ghost fold-btn side-open" hidden>▶</button>
+    <button type="button" id="sideOpen" class="ghost fold-btn side-open" hidden>→</button>
     <div id="empty" class="empty-state">
       <div class="mark">💬</div>
       <strong data-i="pickTitle"></strong>
@@ -91,17 +91,13 @@
           <div id="members"></div>
         </div>
         <span id="status"></span>
+        <button type="button" id="participants" class="ghost"></button>
         <label class="tl"><span data-i="target"></span><select id="tgtLang"></select></label>
         <button id="roomSummary" class="ghost soon" data-i="roomSummary"></button>
         <button id="leave" class="ghost danger" data-i="leave"></button>
         <button id="deleteRoom" class="ghost danger" data-i="deleteRoom" hidden></button>
       </div>
       <div id="log"></div>
-      <aside id="summaryPanel" class="summary-panel" hidden>
-        <div class="summary-toolbar"><strong>방 요약 파일</strong><button id="summaryAdd" type="button" aria-label="요약 자료 선택 시작">+</button><button id="summaryClose" type="button">닫기</button></div>
-        <div id="summarySelection" hidden><p id="summaryCount"></p><button id="summaryGenerate" type="button">선택 자료 요약 생성</button><button id="summaryCancel" type="button">취소</button></div>
-        <div id="summaryList"></div><div id="summaryResult"></div>
-      </aside>
       <form id="form">
         <div class="attach-wrap">
           <button type="button" id="attach">+</button>
@@ -121,12 +117,13 @@
   </main>
 
   <div id="docPanel" hidden>
+    <div class="doc-rail">
+      <button type="button" id="docFold" class="ghost fold-btn">←</button>
+      <span class="rail-label" data-i="summaryList"></span>
+    </div>
     <div class="doc-main">
       <div class="doc-head"><strong id="docTitle"></strong></div>
-      <div id="docHint" class="hint"></div>
-      <div id="docBody"></div>
-      <div id="fileView" hidden></div>
-      <div id="sumView" hidden></div>
+      <div id="sumView"></div>
     </div>
   </div>
 </div>
@@ -140,7 +137,10 @@
 <script defer src="/static/chat/index.js"></script>
 <script defer src="/static/shared/feedback.js"></script>
 <script defer src="/static/shared/panels.js"></script>
+<script defer src="/static/shared/floatwin.js"></script>
+<script defer src="/static/chat/participants.js"></script>
 <script defer src="/static/media/index.js"></script>
+<script defer src="/static/media/pdf.js"></script>
 <script defer src="/static/ai.js"></script>
 <script defer src="/static/users/preferences.js"></script>
 <script defer src="/static/app.js"></script>
