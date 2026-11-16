@@ -1,7 +1,7 @@
-/* 왼쪽 방 목록 접기/펼치기, 오른쪽 패널(문서 보기 · 요약 목록). 화면 배치와 요약 목록 조회만 다룬다. */
+/* 왼쪽 방 목록과 오른쪽 문서 패널의 화면 배치를 다룬다. */
 let sideCollapsed = false;
-let docOpen = false;          // 오른쪽 패널이 펼쳐져 있는지 (접으면 오른쪽 가장자리 버튼 줄만 남는다)
-let panelView = "doc";        // "doc" | "files" | "summaries"
+let docOpen = false;
+const panelView = "doc";
 let docTitleText = "";
 let docAudio = null;          // 패널에서 재생 중인 음성. 패널 내용을 바꾸거나 닫으면 멈춘다
 let docMediaId = null;        // 지금 패널에 열려 있는 문서
@@ -13,25 +13,17 @@ function inRoom() { return typeof currentRoom !== "undefined" && !!currentRoom; 
 
 function applyPanels() {
   const app = $("app");
-  const state = !inRoom() ? "closed" : docOpen ? "open" : "folded";
+  const state = !inRoom() || !docOpen ? "closed" : "open";
   app.classList.toggle("side-collapsed", sideCollapsed);
   app.classList.toggle("doc-open", state === "open");
-  app.classList.toggle("doc-folded", state === "folded");
   $("sideOpen").hidden = !sideCollapsed;
   $("sideFold").title = t("sideFold");
   $("sideOpen").title = t("sideOpen");
   $("docPanel").hidden = state === "closed";
-  $("docPanel").dataset.state = state;
-  $("docFold").textContent = docOpen ? "▶" : "◀";
-  $("docFold").title = t(docOpen ? "docFold" : "docUnfold");
-  $("sumToggle").title = t("summaryList");
-  $("fileToggle").title = t("fileList");
-  $("docBody").hidden = panelView !== "doc";
-  $("fileView").hidden = panelView !== "files";
-  $("sumView").hidden = panelView !== "summaries";
-  $("docTitle").textContent = panelView === "summaries" ? t("summaryList") : panelView === "files" ? t("fileList") : docTitleText;
+  $("docBody").hidden = false;
+  $("docTitle").textContent = docTitleText;
   $("docHint").textContent = t("docHint");
-  $("docHint").hidden = panelView !== "doc" || $("docBody").children.length > 0;
+  $("docHint").hidden = $("docBody").children.length > 0;
 }
 
 function stopDocAudio() {
@@ -43,7 +35,6 @@ function openDocPanel(title, content, mediaId = null, audio = null) {
   docAudio = audio;
   docTitleText = title;
   docMediaId = mediaId;
-  panelView = "doc";
   $("docBody").replaceChildren(content);
   content.hidden = false;
   docOpen = true;
@@ -54,11 +45,8 @@ function closeDocPanel() {  // 방을 바꾸거나 나갈 때: 내용을 비우�
   stopDocAudio();
   docSummaryGeneration++; fileGeneration++;
   $("docBody").replaceChildren();
-  $("sumView").replaceChildren();
-  $("fileView").replaceChildren();
   docTitleText = "";
   docMediaId = null;
-  panelView = "doc";
   docOpen = false;
   applyPanels();
 }
@@ -201,18 +189,5 @@ $("sideFold").onclick = $("sideOpen").onclick = () => {
   sideCollapsed = !sideCollapsed;
   try { localStorage.setItem("sideCollapsed", sideCollapsed ? "1" : "0"); } catch { /* 저장 실패는 무시 */ }
   applyPanels();
-};
-$("docFold").onclick = () => { docOpen = !docOpen; applyPanels(); };
-$("fileToggle").onclick = () => {
-  if (docOpen && panelView === "files") { docOpen = false; applyPanels(); return; }
-  panelView = "files"; docOpen = true;
-  applyPanels();
-  loadFiles();
-};
-$("sumToggle").onclick = () => {
-  if (docOpen && panelView === "summaries") { docOpen = false; applyPanels(); return; }
-  panelView = "summaries"; docOpen = true;
-  applyPanels();
-  loadSummaries();
 };
 applyPanels();

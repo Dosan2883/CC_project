@@ -7,18 +7,13 @@
   #app.side-collapsed { --side-w:0px; }
   #app.side-collapsed > aside { display:none; }
   #app.doc-open { --doc-w:minmax(380px,42%); }
-  #app.doc-folded { --doc-w:44px; }
-  @media (min-width:900px) { #app.doc-open, #app.doc-folded { max-width:1500px; } }
+  @media (min-width:900px) { #app.doc-open { max-width:1500px; } }
   .fold-btn { padding:2px 9px; font-size:12px; flex:none; }
   .side-open { position:absolute; top:12px; left:8px; z-index:2; }
   #app.side-collapsed .chat-head { padding-left:48px; }
   #docPanel { grid-column:3; grid-row:1; display:flex; flex-direction:row; min-width:0; min-height:0; background:var(--side); border-left:1px solid var(--line); }
   #docPanel[hidden] { display:none; }
-  .doc-rail { display:flex; flex-direction:column; align-items:center; gap:8px; padding:12px 6px; width:44px; flex:none; }
-  #docPanel:not([data-state="folded"]) .doc-rail { border-right:1px solid var(--line); }
-  .doc-rail .fold-btn { width:32px; padding:4px 0; text-align:center; }
   .doc-main { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; }
-  #docPanel[data-state="folded"] .doc-main { display:none; }
   .doc-head { display:flex; align-items:center; gap:8px; padding:12px 14px; border-bottom:1px solid var(--line); }
   .doc-head strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #docHint { padding:24px 14px; }
