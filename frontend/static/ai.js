@@ -1,5 +1,10 @@
 /* Selected server-side sources only; no browser-supplied source text. */
 const aiSelections = new Map();
+/* chat/index.js와 auth/index.js가 부르는 함수. 방을 바꾸거나 나가면 선택을 비우고, 메시지 체크박스는 회의 요약 선택(aiSelections)에 반영한다. */
+function resetAiPanel() { aiSelections.clear(); }
+function updateSummarySelection(key, source, size, checked) {
+  if (checked) aiSelections.set(String(key), source); else aiSelections.delete(String(key));
+}
 /* 요약·번역 근거 원문을 보여 주고, 가능한 항목은 대상 언어로 번역해 바꿔 보여 준다. */
 function evidenceLabel(e) {
   if (e.source.kind === "transcript") return t("audioWhole");
