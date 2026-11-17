@@ -118,22 +118,7 @@ class FeatureChecks(unittest.TestCase):
         self.assertTrue(self.jobs.work(again["jobId"]))
         self.assertEqual(self.model.calls, 2)
 
-    def test_room_files_list_newest_first_with_status(self):
-        from app.core.database import Change
-        for seq, (media_id, name, at) in enumerate([("m1", "a.pdf", 100), ("m2", "b.pdf", 200)], start=10):
-            asset = {"mediaId": media_id, "roomId": "r", "filename": name, "type": "document", "ext": "pdf", "size": 5, "status": "COMPLETED", "jobId": media_id, "pageCount": 2}
-            card = {"mediaId": media_id, "filename": name, "kind": "document", "ext": "pdf", "size": 5}
-            self.db.commit([
-                Change("MEDIA", "ASSET#" + media_id, None, asset),
-                Change("MEDIA_JOBS", media_id, None, {"status": "COMPLETED", "progress": 100, "errorCode": None, "retryCount": 0}),
-                Change("ROOM#r", f"MESSAGE#{seq:020d}", None, {"sender": "owner", "sentAt": at, "media": card, "bodyOriginal": name}),
-                Change("ROOM#r", "MEDIA_MESSAGE#" + media_id, None, {"messageSeq": seq}),
-            ])
-        files = self.media.list_room_files("r")
-        self.assertEqual([f["filename"] for f in files], ["b.pdf", "a.pdf"])
-        self.assertEqual((files[0]["status"], files[0]["sender"], files[0]["pageCount"]), ("COMPLETED", "owner", 2))
-
-    def test_delete_file_owner_only_hides_everywhere(self):
+    def test_delete_file_owner_only_and_idempotent(self):
         from app.core.database import Change
         from app.media.service import MediaError
         asset = {"mediaId": "m9", "roomId": "r", "uploader": "owner", "filename": "x.pdf", "type": "document", "ext": "pdf", "size": 5, "status": "COMPLETED", "jobId": "m9", "pageCount": 1}
@@ -143,12 +128,10 @@ class FeatureChecks(unittest.TestCase):
             Change("ROOM#r", f"MESSAGE#{20:020d}", None, {"sender": "owner", "sentAt": 1, "media": {"ext": "pdf"}, "bodyOriginal": "x.pdf"}),
             Change("ROOM#r", "MEDIA_MESSAGE#m9", None, {"messageSeq": 20}),
         ])
-        self.assertEqual([f["mediaId"] for f in self.media.list_room_files("r")], ["m9"])
         self.assertEqual(self.media.live_asset("m9")["mediaId"], "m9")
         with self.assertRaises(HTTPException):
             self.media.delete_file("m9", "outsider")  # 방 멤버가 아니면 거부
         self.assertEqual(self.media.delete_file("m9", "owner")["status"], "DELETED")
-        self.assertEqual(self.media.list_room_files("r"), [])
         with self.assertRaises(MediaError):
             self.media.live_asset("m9")  # 삭제된 파일은 요약·번역에서도 없는 파일로 본다
         self.assertEqual(self.media.delete_file("m9", "owner")["status"], "DELETED")  # 다시 지워도 같은 결과

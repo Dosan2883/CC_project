@@ -306,10 +306,6 @@ class TranslationService:
         # 이전 번역 캐시에는 state 필드가 없었다. translated가 있으면 완료로 간주한다.
         return key, (value["translated"] if value and isinstance(value.get("translated"), str) and value["translated"].strip() else None)
 
-    def remember(self, key, target, translated):
-        saved = self.db.update("TRANSLATION#" + key[:2], key, lambda value: value if value and value.get("translated") else {"state": "COMPLETED", "translated": translated, "target": target, "modelVersion": MODEL_VERSION, "createdAt": int(time.time() * 1000)})
-        return saved["translated"]
-
     def acquire(self, pk, key):
         """캐시 키를 DB 조건부 업데이트로 선점해 다중 프로세스의 중복 호출을 막는다."""
         token = uuid.uuid4().hex

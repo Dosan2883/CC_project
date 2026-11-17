@@ -245,27 +245,6 @@ class MediaService:
                 "status": job.get("status", asset["status"]), "progress": job.get("progress", 0), "errorCode": job.get("errorCode"),
                 "needsOcr": asset.get("needsOcr", False), "pageCount": asset.get("pageCount", 0), "retryCount": job.get("retryCount", 0)}
 
-    def list_room_files(self, room_id):
-        """방에 올라온 파일 목록(최신순). 파일 카드가 들어 있는 메시지와 처리 상태를 합친다."""
-        files = []
-        deleted = {record.sk.split("#", 1)[1] for record in self.db.query("ROOM#" + room_id, "MEDIA_DELETED#")}
-        for record in self.db.query("ROOM#" + room_id, "MEDIA_MESSAGE#"):
-            media_id = record.sk.split("#", 1)[1]
-            if media_id in deleted:
-                continue
-            message = self.db.get("ROOM#" + room_id, f"MESSAGE#{record.value['messageSeq']:020d}")
-            if not message:
-                continue
-            try:
-                state = self.status(media_id)
-            except MediaError:
-                continue
-            card = message.value.get("media") or {}
-            files.append({"mediaId": media_id, "filename": state["filename"], "ext": card.get("ext", ""), "kind": state["kind"],
-                          "size": state["size"], "status": state["status"], "progress": state["progress"], "pageCount": state["pageCount"],
-                          "sender": message.value.get("sender", ""), "sentAt": message.value.get("sentAt", 0), "messageSeq": record.value["messageSeq"]})
-        return sorted(files, key=lambda item: item["sentAt"], reverse=True)
-
     def transcript(self, media_id):
         asset = self.asset(media_id)
         if not asset.get("transcriptKey"):

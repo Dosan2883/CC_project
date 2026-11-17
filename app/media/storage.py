@@ -8,12 +8,6 @@ AWS에서는 같은 인터페이스(put/get)를 가진 S3Storage(boto3)로 교�
   extracted/{mediaId}.json    추출된 텍스트(페이지별)
 """
 from pathlib import Path
-from typing import Protocol
-
-
-class Storage(Protocol):
-    def put(self, key: str, data: bytes) -> None: ...
-    def get(self, key: str) -> bytes: ...
 
 
 class LocalStorage:

@@ -184,12 +184,6 @@ def stream_media(media_id: str, token: str, request: Request):
                     media_type=playback.CONTENT_TYPES.get(asset["ext"], "application/octet-stream"), headers=headers)
 
 
-@router.get("/api/rooms/{room_id}/files")
-def room_files(room_id: str, user: str = Depends(current_user)):
-    room_repo.require_member(room_id, user)
-    return media_svc.list_room_files(room_id)
-
-
 @router.get("/api/media/{media_id}/original")
 def original(media_id: str, user: str = Depends(current_user)):
     asset = media_member(media_id, user)
