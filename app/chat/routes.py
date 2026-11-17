@@ -6,8 +6,44 @@ from pydantic import BaseModel, Field
 from app.auth.dependencies import current_user
 from app.core.config import LANGUAGES
 from app.core.runtime import auth, manager, preferences, room_repo, store
+from app.core.runtime import db
+from app.core.database import Conflict
 
 router = APIRouter()
+
+
+class MessageCorrection(BaseModel):
+    version: int = Field(ge=1)
+    text: str = Field(min_length=1, max_length=8000)
+    language: str = "auto"
+
+
+@router.patch("/api/rooms/{room_id}/messages/{seq}")
+async def correct_message(room_id: str, seq: int, body: MessageCorrection, user: str = Depends(current_user)):
+    from app.core.language import detect
+    from app.ai.refresh import request
+    room = room_repo.record(room_id)
+    room_repo.require_member(room_id, user)
+    member = db.get("ROOM#" + room_id, "MEMBER#" + user)
+    record = db.get("ROOM#" + room_id, f"MESSAGE#{seq:020d}")
+    if not record or record.value.get("media"):
+        raise HTTPException(404, "MESSAGE_NOT_FOUND")
+    if record.value["sender"] != user:
+        raise HTTPException(403, "NOT_MESSAGE_OWNER")
+    if body.version != record.value.get("revision", 1):
+        raise HTTPException(409, "VERSION_CONFLICT")
+    if body.language not in (*LANGUAGES, "auto"):
+        raise HTTPException(422, "INVALID_LANGUAGE")
+    detection = detect(body.text)
+    value = {**record.value, "bodyCurrent":body.text, "revision":body.version+1,
+             "languageDetection":detection, "sourceLanguage":detection["language"] if body.language == "auto" else body.language}
+    try:
+        db.commit([room.change(room.value, check=True), member.change(member.value, check=True), record.change(value),
+                   request(room_id, {"kind":"message", "messageSeq":seq}, body.version+1)])
+    except Conflict:
+        raise HTTPException(409, "VERSION_CONFLICT")
+    await manager.broadcast(room_id, {**value, "type":"message:updated"})
+    return value
 
 
 class ReadRequest(BaseModel):

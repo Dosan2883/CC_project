@@ -1,4 +1,5 @@
 fastapi
+langdetect==1.0.9
 uvicorn[standard]
 pypdf
 Pillow>=10,<13

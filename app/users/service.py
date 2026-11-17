@@ -16,7 +16,7 @@ class PreferencesService:
 
     def update(self, user, changes):
         for key, value in changes.items():
-            allowed = UI_LANGUAGES if key == "uiLocale" else LANGUAGES
+            allowed = UI_LANGUAGES if key == "uiLocale" else [*LANGUAGES, "auto"] if key == "sourceLanguage" else LANGUAGES
             if key not in DEFAULTS or value not in allowed:
                 raise HTTPException(422, "INVALID_PREFERENCE")
         return self.db.update("USER#" + user.casefold(), "PREFERENCES", lambda value: {**DEFAULTS, **(value or {}), **changes})

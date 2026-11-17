@@ -12,7 +12,7 @@ import time
 
 PLAY_TTL = 3600
 CONTENT_TYPES = {"mp3": "audio/mpeg", "m4a": "audio/mp4", "wav": "audio/wav", "ogg": "audio/ogg", "flac": "audio/flac",
-                 "mp4": "video/mp4", "webm": "video/webm"}
+                 "mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime"}
 RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 

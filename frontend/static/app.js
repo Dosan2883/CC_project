@@ -1,7 +1,7 @@
 const languageOptionsReady = fetch("/api/languages").then(r => { if (!r.ok) throw new Error("languages unavailable"); return r.json(); }).then(list => {
   const opts = list.map(c => `<option value="${c}">${LANG_NAMES[c]}</option>`).join("");
   for (const id of ["tgtLang", "prefTarget", "prefSubtitle"]) $(id).innerHTML = opts;
-  $("srcLang").innerHTML = $("prefSource").innerHTML = opts;
+  $("srcLang").innerHTML = $("prefSource").innerHTML = '<option value="auto">자동 판별</option>' + opts;
   $("prefUiLocale").innerHTML = ["ko", "en", "ja"].map(c => `<option value="${c}">${LANG_NAMES[c]}</option>`).join("");
   const def = ["ko","en","ja"].includes(locale) ? locale : "ko";
   $("srcLang").value = def; $("tgtLang").value = targetLang = def;

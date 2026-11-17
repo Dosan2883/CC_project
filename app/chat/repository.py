@@ -32,6 +32,11 @@ class MessageStore:
         seq = record.value["lastMessageSeq"] + 1
         message = {"type": "message:new", "roomId": room, "messageSeq": seq, "sender": user, "bodyOriginal": body,
                    "sourceLanguage": source_lang, "sentAt": int(time.time() * 1000)}
+        if not media:
+            from app.core.language import detect
+            message["languageDetection"] = detect(body)
+            if source_lang in ("und", "auto"):
+                message["sourceLanguage"] = message["languageDetection"]["language"]
         if client_message_id:
             message["clientMessageId"] = client_message_id
         if media:

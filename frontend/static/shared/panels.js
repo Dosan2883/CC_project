@@ -34,7 +34,7 @@ function closeDocPanel() {  // 방을 바꾸거나 나갈 때: 목록을 비우�
 /* ---------- 요약 목록 ---------- */
 function summaryMeta(entry) {
   const kind = entry.kind === "meeting-summary" ? t("roomSummary") : t("summarize");
-  return `${kind} · ${LANG_NAMES[entry.target] || entry.target} · ${entry.requester} · ${new Date(entry.updatedAt).toLocaleString()}`;
+  return `${entry.stale ? "이전 버전 · " : ""}${kind} · ${LANG_NAMES[entry.target] || entry.target} · ${entry.requester} · ${new Date(entry.updatedAt).toLocaleString()}`;
 }
 
 async function deleteSummary(roomId, entryId) {

@@ -18,7 +18,7 @@ from app.rooms.repository import retry_conflicts
 
 log = logging.getLogger(__name__)
 ALLOWED_EXT = {"pdf": "document", "docx": "document", "txt": "document", "jpg": "image", "jpeg": "image", "png": "image",
-               "mp3": "audio", "m4a": "audio", "wav": "audio", "ogg": "audio", "flac": "audio", "mp4": "video", "webm": "video"}
+               "mp3": "audio", "m4a": "audio", "wav": "audio", "ogg": "audio", "flac": "audio", "mp4": "video", "webm": "video", "mov": "video"}
 MAX_BYTES = 20 * 1024 * 1024
 # 음성·영상은 문서보다 커서 종류별로 따로 제한한다. 서버 메모리가 작아 한 번에 메모리에 올리는 크기를 넘기지 않는다.
 MAX_BYTES_BY_TYPE = {"audio": int(os.getenv("MAX_AUDIO_MB", "30")) * 1024 * 1024, "video": int(os.getenv("MAX_VIDEO_MB", "60")) * 1024 * 1024}
@@ -66,6 +66,8 @@ def looks_valid(ext: str, data: bytes) -> bool:
         return data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
     if ext == "wav":
         return data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+    if ext == "mov":
+        return data[4:8] == b"ftyp" or data[4:8] in (b"moov", b"mdat", b"wide")
     if ext in ("m4a", "mp4"):
         return data[4:8] == b"ftyp"
     if ext == "ogg":
@@ -367,8 +369,11 @@ class MediaService:
         except HTTPException:
             self.db.commit([record.change({**record.value, "status": "CANCELLED", "errorCode": "ROOM_DELETED", "leaseUntil": 0})])
             return
+        from app.ai.refresh import request as refresh_request
         self.db.commit([room.change(room.value, check=True),
+                        refresh_request(asset["roomId"], {"mediaId":asset["mediaId"]}, key),
                         record.change({**record.value, "status": "COMPLETED", "progress": 100, "errorCode": None, "leaseUntil": 0}),
                         media.change({**media.value, "transcriptKey": key, "extractionVersion": result["version"], "pageCount": len(result["pages"]), "needsOcr": result["needsOcr"],
                                       "detectedLanguages": sorted({p["language"] for p in result.get("pageDetails", []) if p.get("language")}),
                                       "recognitionModel": sorted({p["model"] for p in result.get("pageDetails", []) if p.get("model")})})])
+        self.on_event(asset["roomId"], {"type":"source:updated", "mediaId":asset["mediaId"], "version":result["version"]})

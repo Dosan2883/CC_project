@@ -32,6 +32,9 @@ class MediaWorker:
                 log.warning("worker still finishing; lease permits another worker to recover after exit")
 
     def recover(self):
+        if getattr(self.service, "jobs_partition", "") == "AI_JOBS":
+            from app.ai.refresh import recover
+            recover(self.service)
         for record in self.service.db.query(getattr(self.service, "jobs_partition", "MEDIA_JOBS")):
             job = record.value
             if job["status"] in ("PENDING", "PROCESSING") and job.get("leaseUntil", 0) < time.time() and job.get("availableAt", 0) <= time.time():

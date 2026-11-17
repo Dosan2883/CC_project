@@ -3,6 +3,7 @@
 서버가 메시지를 저장소에서 직접 읽어 번역한다. 클라이언트가 보낸 글자는 번역하지 않으므로
 방 멤버가 아니면 쓸 수 없고, 이 API를 아무 글이나 번역하는 용도로 쓸 수도 없다.
 """
+import json
 import hashlib
 import re
 import time
@@ -114,7 +115,8 @@ class TranslationService:
                 raise HTTPException(409, "SOURCE_VERSION_CHANGED")
         if message.get("media"):
             raise HTTPException(422, "NOT_TEXT_MESSAGE")
-        text = message["bodyOriginal"]
+        text = message.get("bodyCurrent", message["bodyOriginal"])
+        context = {"room":room_id, "message":seq, "version":record.version}
         if len(text) > MAX_CHARS:
             raise HTTPException(422, "TEXT_TOO_LONG")
         if message.get("sourceLanguage") == target:  # 이미 같은 언어면 호출하지 않는다
@@ -125,7 +127,7 @@ class TranslationService:
         if source and not text_matches_language(text, source):  # 설정한 원문 언어와 실제 글이 다르면 그대로 둔다
             verify()
             return {"translated": text, "target": target, "cached": False, "sameLanguage": True, "languageMismatch": True}
-        translated, cached = self.translate_text(text, target, user, verify, source)
+        translated, cached = self.translate_text(text, target, user, verify, source, context)
         verify()
         return {"translated": translated, "target": target, "cached": cached, "sameLanguage": False}
 
@@ -148,16 +150,21 @@ class TranslationService:
         if len(segments) > MAX_SEGMENTS or sum(len(s["text"]) for s in segments) > MAX_PAGE_CHARS:
             raise HTTPException(422, "TRANSCRIPT_TOO_LONG")
         source = self.source_language(transcript.get("language"))
+        context = {"room":asset["roomId"], "media":media_id, "kind":"segments", "version":transcript.get("version", 1)}
 
         def verify():
             try:
                 self.rooms.require_member(asset["roomId"], user)
-                self.media.live_asset(media_id)
-            except (MediaError, HTTPException):
+                current = self.media.live_asset(media_id)
+                latest = self.media.transcript(media_id)
+                if latest.get("version", 1) != transcript.get("version", 1) or latest.get("segments") != segments:
+                    raise HTTPException(409, "SOURCE_VERSION_CHANGED")
+            except MediaError:
                 raise HTTPException(404, "MEDIA_NOT_FOUND")
 
         def result(values):
-            return {"target": target, "segments": [{"start": s["start"], "end": s["end"], "text": s["text"], "translated": value}
+            verify()
+            return {"version":transcript.get("version", 1), "target": target, "segments": [{"start": s["start"], "end": s["end"], "text": s["text"], "translated": value}
                                                    for s, value in zip(segments, values)]}
 
         if source == target:  # 이미 같은 언어면 호출하지 않는다
@@ -173,7 +180,7 @@ class TranslationService:
         batches.append(current)
         values = [None] * len(segments)
         for batch in batches:
-            output, _ = self.translate_text("\n".join(line for _, line in batch), target, user, verify, source)
+            output, _ = self.translate_text("\n".join(line for _, line in batch), target, user, verify, source, context)
             parsed = parse_numbered(output)
             if all(parsed.get(index + 1) for index, _ in batch):
                 for index, _ in batch:
@@ -181,7 +188,7 @@ class TranslationService:
                 continue
             # 번호가 하나라도 빠지면 줄이 이웃 구간에 붙어 어긋났을 수 있으므로, 그 묶음은 구간마다 따로 번역한다
             for index, _ in batch:
-                values[index], _ = self.translate_text(segments[index]["text"], target, user, verify, source)
+                values[index], _ = self.translate_text(segments[index]["text"], target, user, verify, source, context)
         verify()
         return result(values)
 
@@ -212,6 +219,7 @@ class TranslationService:
             raise HTTPException(error.status, error.code)
         if not 1 <= page <= len(pages):
             raise HTTPException(422, "INVALID_PAGE")
+        context = {"room":asset["roomId"], "media":media_id, "page":page, "version":transcript.get("version", 1)}
         text = pages[page - 1].strip()
         if not text:
             raise HTTPException(422, "EMPTY_PAGE")
@@ -236,12 +244,12 @@ class TranslationService:
 
         if source and not text_matches_language(text, source):  # 설정한 원문 언어와 실제 글이 다르면 번역하지 않는다
             return checked({"translated": text, "target": target, "page": page, "cached": False, "languageMismatch": True})
-        key, cached = self.cached(target, text, source)
+        key, cached = self.cached(target, text, source, context)
         if cached:
             return checked({"translated": cached, "target": target, "page": page, "cached": True})
         chunks = split_text(text)
         if len(chunks) == 1:
-            translated, was_cached = self.translate_text(text, target, user, verify, source)
+            translated, was_cached = self.translate_text(text, target, user, verify, source, context)
             return checked({"translated": translated, "target": target, "page": page, "cached": was_cached})
         page_key = "TRANSLATION#" + key[:2]
         lease, saved = self.acquire(page_key, key)
@@ -249,7 +257,7 @@ class TranslationService:
             return checked({"translated": saved, "target": target, "page": page, "cached": True})
         reservation_ids = []
         try:
-            chunk_records = [self.cached(target, chunk, source) for chunk in chunks]
+            chunk_records = [self.cached(target, chunk, source, context) for chunk in chunks]
             missing = [index for index, (_, value) in enumerate(chunk_records) if value is None]
             reservation_ids = self.reserve(user, len(missing)) if missing else []
             reservation_by_index = dict(zip(missing, reservation_ids))
@@ -294,13 +302,16 @@ class TranslationService:
         return self.translator.translate(text, LANGUAGE_NAMES[target])
 
     @staticmethod
-    def cache_key(target, text, source=None):
+    def cache_key(target, text, source=None, context=None):
         # source가 없으면 예전 캐시 키와 같다.
         suffix = f"\nsource:{source}" if source else ""
-        return hashlib.sha256(f"{MODEL_VERSION}\n{target}\n{text}{suffix}".encode()).hexdigest()
+        from app.ai.jobs import SUMMARY_CACHE_VERSION
+        identity = {"schema":2, "kind":"translate", "model":MODEL_VERSION, "prompt":SUMMARY_CACHE_VERSION,
+                    "target":target, "text":text, "sourceLanguage":source, "scope":context}
+        return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
-    def cached(self, target, text, source=None):
-        key = self.cache_key(target, text, source)
+    def cached(self, target, text, source=None, context=None):
+        key = self.cache_key(target, text, source, context)
         record = self.db.get("TRANSLATION#" + key[:2], key)
         value = record.value if record else None
         # 이전 번역 캐시에는 state 필드가 없었다. translated가 있으면 완료로 간주한다.
@@ -348,9 +359,9 @@ class TranslationService:
             return value
         self.db.update(pk, key, release)
 
-    def translate_text(self, text, target, user, verify=None, source=None):
+    def translate_text(self, text, target, user, verify=None, source=None, context=None):
         verify = verify or (lambda: None)
-        key, cached = self.cached(target, text, source)
+        key, cached = self.cached(target, text, source, context)
         if cached:
             verify()
             return cached, True

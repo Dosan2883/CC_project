@@ -116,6 +116,9 @@ def extract(ext: str, data: bytes, on_progress: Progress, language="auto") -> di
             raise ExtractError("UNSUPPORTED_TYPE")
         result = fn(data, on_progress)
     if ext not in ("pdf", "jpg", "jpeg", "png"):
+        from app.core.language import detect
+        result.update(originalPages=list(result["pages"]), version=1,
+                      pageDetails=[dict(page=i+1, method="text", **{k:v for k,v in detect(text).items() if k != "method"}) for i,text in enumerate(result["pages"])])
         return result
     from app.media.ocr import raster, recognize
     details = []
@@ -129,6 +132,9 @@ def extract(ext: str, data: bytes, on_progress: Progress, language="auto") -> di
                 detail.update(method="ocr", needsReview=True, error="OCR_NOT_INSTALLED")
             except Exception:
                 detail.update(method="ocr", needsReview=True, error="OCR_FAILED")
+        if detail["method"] == "text":
+            from app.core.language import detect
+            detail.update({k:v for k,v in detect(result["pages"][index]).items() if k != "method"})
         details.append(detail)
         on_progress(index + 1, len(result["pages"]))
     result.update(pageDetails=details, version=1, originalPages=list(result["pages"]),

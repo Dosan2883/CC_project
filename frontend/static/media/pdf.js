@@ -87,11 +87,11 @@ async function openPdfTranslateAll(m) {
   let pages;
   try { pages = await pdfPages(m.mediaId); } catch { return toast(t("failed")); }
   if (!pages.length) return toast(t("emptyText"));
-  const target = targetLang, generation = viewGeneration, authToken = token;
+  const target = itemTarget(`file:${m.mediaId}`), epoch = itemEpoch(`file:${m.mediaId}`), generation = viewGeneration, authToken = token;
   const win = openFloatWindow(`${m.filename} · ${t("pdfTranslateAll")} (${LANG_NAMES[target]})`, {width: 520, height: 620});
   const status = el("small", "pdf-status"), list = el("div", "pdf-results");
   win.body.append(status, list);
-  const alive = () => win.open && viewGeneration === generation && token === authToken;
+  const alive = () => win.open && viewGeneration === generation && token === authToken && epoch === itemEpoch(`file:${m.mediaId}`);
   for (let index = 0; index < pages.length && alive(); index++) {
     status.textContent = `${t("translating")} ${index + 1} / ${pages.length}`;
     const block = el("div", "pdf-block"); block.append(el("h4", null, `${t("pageN")} ${index + 1}`));

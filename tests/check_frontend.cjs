@@ -14,6 +14,7 @@ class Element {
   append(...children) { this.children.push(...children); }
   appendChild(child) { this.append(child); }
   replaceChildren(...children) { this.children = children; }
+  querySelectorAll() { return []; }
   addEventListener() {}
   focus() {}
 }
@@ -86,7 +87,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   assert.ok(requests.some(request => request.url === "/api/rooms/room/read" && request.body.lastReadSeq === 1));
   await elements.get("fileInput").onchange({target: {files: [{name: "demo.txt", size: 3}], value: "file"}});
   const uploadSteps = requests.filter(request => ["/mock-upload", "/api/files/file/complete", "/api/media/file/process"].includes(request.url));
-  assert.deepEqual(uploadSteps.map(request => request.url), ["/mock-upload", "/api/files/file/complete"]);
+  assert.deepEqual(uploadSteps.map(request => request.url), ["/mock-upload", "/api/files/file/complete", "/api/media/file/process"]);
   assert.equal(uploadSteps[0].headers["If-None-Match"], "*");
   await elements.get("deleteRoom").onclick();
   assert.ok(requests.some(request => request.url === "/api/rooms/room" && request.method === "DELETE"));

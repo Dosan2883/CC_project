@@ -143,7 +143,10 @@ class DemoIntegrationTests(unittest.TestCase):
             if time.monotonic() > deadline:
                 self.fail("document processing did not complete")
             time.sleep(0.01)
-        self.assertEqual(self.request(path + "/transcript", token=token)[1], {"pages": [payload.decode()], "needsOcr": False, "version": 1})
+        transcript = self.request(path + "/transcript", token=token)[1]
+        self.assertEqual({key:transcript[key] for key in ("pages", "needsOcr", "version")}, {"pages":[payload.decode()], "needsOcr":False, "version":1})
+        self.assertEqual(transcript["originalPages"], [payload.decode()])
+        self.assertEqual(transcript["pageDetails"][0]["language"], "ko")
 
     def test_page_and_all_static_assets(self):
         status, page = self.request("/")

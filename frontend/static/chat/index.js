@@ -76,7 +76,7 @@ function enterRoom(r) {
   if (currentRoom && currentRoom.roomId === r.roomId && ws) { $("app").classList.add("in-room"); return; }
   closeSocket();
   resetAiPanel();
-  currentRoom = r; viewGeneration++; closeDocPanel(); lastSeq = 0; retry = 0; prevMsg = null;
+  messageViews.clear(); currentRoom = r; viewGeneration++; closeDocPanel(); lastSeq = 0; retry = 0; prevMsg = null;
   aiSelections.clear();
   loadOutbox(r.roomId);
   clearFilePolling(); readBadges.clear(); readMembers = []; acknowledgedRead = r.lastReadSeq || 0; resetParticipants();
@@ -148,7 +148,10 @@ function connect() {
     if (!isCurrent()) return;
     const d = JSON.parse(ev.data);
     if (d.roomId && d.roomId !== roomId) return;
-    if (d.type === "message:new") { if (d.messageSeq > lastSeq) { lastSeq = d.messageSeq; addMessage(d); markVisibleRead(); } }
+    if (d.type === "message:updated") { messageViews.get(d.messageSeq)?.(d); refreshSummaries(); }
+    else if (d.type === "source:updated") { document.dispatchEvent(new CustomEvent("source:updated", {detail:d})); refreshSummaries(); }
+    else if (d.type === "ai:updated") refreshSummaries();
+    else if (d.type === "message:new") { if (d.messageSeq > lastSeq) { lastSeq = d.messageSeq; addMessage(d); markVisibleRead(); } }
     else if (d.type === "message:ack") acknowledgeMessage(d.clientMessageId);
     else if (d.type === "media:update" || d.type === "media:ready") { if (cards[d.mediaId]) cards[d.mediaId](d); }
     else if (d.type === "presence") { $("members").textContent = `${t("online")}: ${d.members.join(", ")}`; setOnlineUsers(d.members); }
@@ -182,8 +185,10 @@ function pushToLog(el, force) {
   if (atBottom || force) log.scrollTop = log.scrollHeight;
 }
 function addSystem(text) { const d = document.createElement("div"); d.className = "sys"; d.textContent = text; pushToLog(d); prevMsg = null; }
+const messageViews = new Map();
 function addMessage(m) {
   const mine = m.sender === me;
+  let originalView = false;
   // 같은 사람이 2분 안에 이어서 보내면 아바타·이름을 생략하고 묶어서 보여 준다.
   const cont = prevMsg && prevMsg.sender === m.sender && m.sentAt - prevMsg.sentAt < 120000;
   prevMsg = m;
@@ -197,7 +202,7 @@ function addMessage(m) {
   meta.append(document.createTextNode(mine ? time : `${m.sender} · ${time}`));
   const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = m.sourceLanguage;
   if (!m.media) meta.append(badge);
-  const bubble = m.media ? fileCard(m.media, m.sender) : Object.assign(document.createElement("div"), { className: "bubble", textContent: m.bodyOriginal });  // 원문 그대로 표시
+  const bubble = m.media ? fileCard(m.media, m.sender) : Object.assign(document.createElement("div"), { className: "bubble", textContent: m.bodyCurrent ?? m.bodyOriginal });  // 원문 그대로 표시
   // 번역: 서버가 저장된 메시지를 직접 읽어 번역한다. 요약은 아직 자리만 만들어 둔다.
   const acts = document.createElement("div"); acts.className = "acts";
   const translateButton = document.createElement("button"); translateButton.type = "button"; translateButton.textContent = t("translate");
@@ -209,6 +214,26 @@ function addMessage(m) {
     selection.className = "summary-choice";
     selection.onchange = () => updateSummarySelection(m.messageSeq, {kind:"message", messageSeq:m.messageSeq}, m.bodyOriginal.length, selection.checked);
     acts.append(selection);
+    const clearTranslation = () => { body.querySelectorAll(".translation").forEach(e => e.remove()); translateButton.textContent = t("translate"); };
+    acts.append(targetPicker(`message:${currentRoom.roomId}:${m.messageSeq}`, clearTranslation));
+    const sourceView = document.createElement("button"); sourceView.type = "button"; sourceView.textContent = "원문/수정본";
+    sourceView.onclick = () => { originalView = !originalView; bubble.textContent = originalView ? m.bodyOriginal : (m.bodyCurrent ?? m.bodyOriginal); };
+    acts.append(sourceView);
+    const update = value => {
+      Object.assign(m, value); clearTranslation(); bubble.textContent = originalView ? m.bodyOriginal : (m.bodyCurrent ?? m.bodyOriginal);
+      badge.textContent = m.sourceLanguage + (m.languageDetection?.needsReview ? " · 확인 필요" : "");
+    };
+    messageViews.set(m.messageSeq, update);
+    update(m);
+    if (mine) {
+      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "수정";
+      edit.onclick = async () => {
+        const text = prompt("메시지 수정", m.bodyCurrent ?? m.bodyOriginal); if (text == null || !text.trim()) return;
+        try { update(await api(`/api/rooms/${currentRoom.roomId}/messages/${m.messageSeq}`, "PATCH", {version:m.revision || 1, text, language:"auto"})); }
+        catch (error) { toast(error.code || t("failed")); }
+      };
+      acts.append(edit);
+    }
   }
   acts.append(translateButton, summarizeButton);
   body.append(meta, bubble);
@@ -234,11 +259,12 @@ async function translateMessage(m, bubble, button) {
     if (!confirm(t("translateConsent"))) return;
     rememberTranslateConsent();
   }
-  const roomId = currentRoom.roomId, target = targetLang, generation = viewGeneration, authToken = token;
+  const roomId = currentRoom.roomId, target = itemTarget(`message:${currentRoom.roomId}:${m.messageSeq}`), revision = m.revision || 1, generation = viewGeneration, authToken = token;
   button.disabled = true; button.textContent = t("translating");
   try {
     const result = await api("/api/ai/translate", "POST", { roomId, messageSeq: m.messageSeq, target });
     if (currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;  // 이전 방·계정의 응답은 폐기
+    if ((m.revision || 1) !== revision || target !== itemTarget(`message:${roomId}:${m.messageSeq}`)) return;
     const box = document.createElement("div"); box.className = "translation";
     const label = document.createElement("small"); label.textContent = `${t("translated")} · ${LANG_NAMES[target]}`;
     const text = document.createElement("div"); text.textContent = result.translated;  // textContent로 XSS 방지

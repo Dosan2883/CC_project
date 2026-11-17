@@ -3,6 +3,24 @@ let locale = (navigator.language || "ko").slice(0,2);
 if (!I18N[locale]) locale = "en";
 let token = null, ws, me, currentRoom, lastSeq = 0, retry = 0, reconnectTimer, roomsTimer, lastRooms = [], prevMsg = null, viewGeneration = 0;
 let targetLang = locale;
+const itemTargets = new Map(), itemEpochs = new Map();
+const itemEpoch = key => itemEpochs.get(key) || 0;
+document.addEventListener("source:updated", event => { const key = `file:${event.detail.mediaId}`; itemEpochs.set(key, itemEpoch(key) + 1); });
+function itemTarget(key) {
+  if (itemTargets.has(`${me}:${key}`)) return itemTargets.get(`${me}:${key}`);
+  try { return localStorage.getItem(`target:${me}:${key}`) || targetLang; } catch { return targetLang; }
+}
+function targetPicker(key, changed = () => {}) {
+  const select = document.createElement("select"); select.title = "이 항목의 번역 언어";
+  for (const code of ["ko", "en", "ja", "zh-CN", "es", "fr"]) select.append(Object.assign(document.createElement("option"), {textContent:LANG_NAMES[code] || code, value:code}));
+  select.value = itemTarget(key);
+  select.onchange = () => {
+    itemTargets.set(`${me}:${key}`, select.value); itemEpochs.set(key, itemEpoch(key) + 1);
+    try { localStorage.setItem(`target:${me}:${key}`, select.value); } catch {}
+    changed(select.value);
+  };
+  return select;
+}
 
 const hue = s => { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return h; };
 const color = s => `hsl(${hue(s)} 50% 42%)`;

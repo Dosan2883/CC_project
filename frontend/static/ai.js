@@ -73,7 +73,9 @@ async function runAi(sources, kind = "summarize") {
   }
   const roomId = currentRoom.roomId, generation = viewGeneration, authToken = token;
   // 번역은 번역 대상 언어로, 요약은 앱 표시 언어로 만든다. 근거 원문은 번역 대상 언어로 보여 준다.
-  const outputLanguage = kind === "translate" ? targetLang : locale, evidenceLanguage = targetLang;
+  const firstSource = sources[0];
+  const selectedTarget = firstSource?.mediaId ? itemTarget(`file:${firstSource.mediaId}`) : firstSource?.kind === "message" ? itemTarget(`message:${currentRoom.roomId}:${firstSource.messageSeq}`) : targetLang;
+  const outputLanguage = kind === "translate" ? selectedTarget : locale, evidenceLanguage = selectedTarget;
   const win = openFloatWindow(kind === "translate" ? t("translate") : kind === "meeting-summary" ? t("roomSummary") : t("summarize"), {width: 480, height: 480});
   const state = document.createElement("p"), output = document.createElement("pre");
   output.style.whiteSpace = "pre-wrap";
@@ -137,7 +139,7 @@ function pageReview(mediaId, page, pre, transcript) {
   include.onchange = () => include.checked ? aiSelections.set(`${mediaId}:${page}`, {kind:"page", mediaId, page}) : aiSelections.delete(`${mediaId}:${page}`);
   controls.append(include, document.createTextNode("회의 요약에 이 페이지 포함"));
   controls.append(button("수정 저장", async () => {
-    try { const r = await api(`/api/media/${mediaId}/pages/${page}`, "PATCH", {version:transcript.version || 1, text:editor.value, language:language.value}); Object.assign(transcript, r); pre.textContent = editor.value; for (const old of pre.parentElement.querySelectorAll(".translation")) old.remove(); toast("저장했습니다."); }
+    try { const r = await api(`/api/media/${mediaId}/pages/${page}`, "PATCH", {version:transcript.version || 1, text:editor.value, language:language.value}); Object.assign(transcript, r); pre.textContent = editor.value; for (const old of pre.parentElement.querySelectorAll(".translation")) old.remove(); document.dispatchEvent(new CustomEvent("source:updated", {detail:{mediaId}})); toast("저장했습니다."); }
     catch (e) { toast(e.code || t("failed")); }
   }));
   for (const [label, kind] of [["선택 범위 번역", "translate"], ["선택 범위 요약", "summarize"]]) controls.append(button(label, () => {
@@ -168,5 +170,7 @@ function pageReview(mediaId, page, pre, transcript) {
       document.body.append(dialog); dialog.showModal();
     } catch { if (url) URL.revokeObjectURL(url); toast("이 파일의 페이지 이미지를 열 수 없습니다."); }
   }));
+  const original = button("원문/수정본", () => { pre.textContent = pre.textContent === transcript.pages[page - 1] ? (transcript.originalPages?.[page - 1] ?? transcript.pages[page - 1]) : transcript.pages[page - 1]; });
+  controls.append(original);
   pre.before(controls);
 }

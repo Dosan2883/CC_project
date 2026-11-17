@@ -8,6 +8,7 @@ STT_BACKEND
   fake    : 모델 없이 정해진 결과를 돌려준다(로컬 개발·화면 확인용)
   (비움)  : 음성·영상 처리를 하지 않는다(STT_NOT_CONFIGURED로 실패)
 """
+import math
 import logging
 import os
 import tempfile
@@ -19,7 +20,7 @@ log = logging.getLogger(__name__)
 # 앱 언어 → Whisper 언어 코드
 LANGUAGE_CODES = {"ko": "ko", "en": "en", "ja": "ja", "zh-CN": "zh", "es": "es", "fr": "fr"}
 AUDIO_EXTENSIONS = {"mp3", "m4a", "wav", "ogg", "flac"}
-VIDEO_EXTENSIONS = {"mp4", "webm"}
+VIDEO_EXTENSIONS = {"mp4", "webm", "mov"}
 MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 # 한 번에 하나만 인식한다. 서버 CPU와 메모리가 작아서 동시에 돌리면 채팅까지 느려진다.
@@ -100,7 +101,13 @@ class WhisperTranscriber:
             except Exception as error:  # 읽을 수 없는 파일, 디코딩 실패 등. 사용자에게는 상세를 보이지 않고 서버 로그에만 남긴다
                 log.exception("Whisper transcription failed")
                 raise SpeechError("INVALID_AUDIO", type(error).__name__) from error
-        return {"segments": segments_from_whisper(collected), "language": language_from_whisper(getattr(info, "language", None)),
+        segments = segments_from_whisper(collected)
+        retained = [s for s in collected if (getattr(s, "text", "") or "").strip() and not
+                    (getattr(s, "no_speech_prob", 0) > .8 and getattr(s, "avg_logprob", 0) < -1)]
+        for segment, raw_segment in zip(segments, retained):
+            score = min(1., max(0., math.exp(min(0., getattr(raw_segment, "avg_logprob", -1.)))))
+            segment.update(confidence=round(score, 3), needsReview=score < .65 or getattr(raw_segment, "no_speech_prob", 0) > .5)
+        return {"segments": segments, "language": language_from_whisper(getattr(info, "language", None)),
                 "durationSeconds": round(duration, 2), "model": f"whisper-{self.model_size}"}
 
 
@@ -150,6 +157,23 @@ def transcribe_bytes(data, ext, language=None, progress=None):
     try:
         with handle:
             handle.write(data)
-        return transcriber.transcribe_file(handle.name, language, progress)
+        if not isinstance(transcriber, WhisperTranscriber):
+            return transcriber.transcribe_file(handle.name, language, progress)
+        from app.media.preprocess import prepare
+        with tempfile.TemporaryDirectory() as directory:
+            files, duration, chunk = prepare(handle.name, directory, transcriber.max_seconds)
+            segments, detected, models = [], None, None
+            for index, path in enumerate(files):
+                offset = index * chunk
+                def report(done, total):
+                    if progress:
+                        progress(min(offset + done, duration), duration)
+                out = transcriber.transcribe_file(path, language, report)
+                detected, models = detected or out["language"], out["model"]
+                for segment in out["segments"]:
+                    start, end = segment["start"] + offset, min(segment["end"] + offset, duration)
+                    if end > start:
+                        segments.append({**segment, "start":round(start, 2), "end":round(end, 2)})
+            return {"segments":segments, "durationSeconds":duration, "language":detected, "model":models}
     finally:
         Path(handle.name).unlink(missing_ok=True)

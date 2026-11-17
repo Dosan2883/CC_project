@@ -71,7 +71,7 @@ class AIJobs:
                 record = self.db.get("ROOM#" + room, f'MESSAGE#{source["messageSeq"]:020d}')
                 if not record or record.value.get("media"):
                     raise HTTPException(404, "MESSAGE_NOT_FOUND")
-                item = {"text": record.value["bodyOriginal"], "sentAt": record.value["sentAt"], "source": source,
+                item = {"text": record.value.get("bodyCurrent", record.value["bodyOriginal"]), "sentAt": record.value["sentAt"], "source": source,
                         "version":record.version, "sourceLanguage":record.value.get("sourceLanguage", "und")}
             else:
                 try:
@@ -407,22 +407,6 @@ class AIJobs:
         legacy_evidence = [{k:v for k,v in e.items() if k != "sourceLanguage" and not (k == "version" and e["source"]["kind"] == "message")} for e in job["evidence"]]
         legacy_hash = self.digest(legacy_evidence)
         legacy_allowed = all(e["source"]["kind"] != "message" or e.get("version", 1) == 1 for e in job["evidence"])
-        if job["kind"] == "translate" and len(job["evidence"]) == 1 and job["sourceLanguage"] == "auto":
-            evidence, source = job["evidence"][0], job["sources"][0]
-            if not source.get("startChar") and source.get("endChar") is None and source["kind"] in ("message", "page"):
-                language = None
-                if source["kind"] == "message":
-                    record = self.db.get("ROOM#" + job["roomId"], f'MESSAGE#{source["messageSeq"]:020d}')
-                    language = record.value.get("sourceLanguage") if record else None
-                else:
-                    transcript = self.media.transcript(source["mediaId"])
-                    details = transcript.get("pageDetails", [])
-                    detail = details[source["page"]-1] if len(details) >= source["page"] else {}
-                    language = transcript.get("corrections", {}).get(str(source["page"]), {}).get("language") or detail.get("language")
-                language = self.translation.source_language(language)
-                _, cached = self.translation.cached(job["target"], evidence["text"].strip(), language)
-                if cached:
-                    return {"text":cached, "flags":{"cached":True,"sameLanguage":False}, "evidence":job["evidence"], "sourceHash":job["sourceHash"]}
         legacy = self.cached_summary(job) if job["kind"] != "translate" and job["sourceLanguage"] == "auto" else None
         if not legacy and legacy_allowed and job["kind"] != "translate" and job["sourceLanguage"] == "auto":
             legacy = self.cached_summary({**job, "sourceHash":legacy_hash})
@@ -447,7 +431,7 @@ class AIJobs:
             def call():
                 source_language = self.translation.source_language(job["sourceLanguage"])
                 if job["kind"] == "translate":
-                    _, cached = self.translation.cached(job["target"], text, source_language)
+                    _, cached = self.translation.cached(job["target"], text, source_language, identity)
                     if cached:
                         return {"text":cached}
                 def count(value):
@@ -457,7 +441,7 @@ class AIJobs:
                 self.db.update("AI_JOBS", job["jobId"], count)
                 self.budget(job, text)
                 if job["kind"] == "translate":
-                    output, _ = self.translation.translate_text(text, job["target"], job["requester"], source=source_language)
+                    output, _ = self.translation.translate_text(text, job["target"], job["requester"], source=source_language, context=identity)
                     return {"text":output}
                 return {"text":check(self.translation.translator.summarize(text, LANGUAGE_NAMES[job["target"]]))}
             return self.artifacts.run(identity, key, call, lambda:self.get(job["jobId"], job["requester"]))[0]["text"]
@@ -511,6 +495,7 @@ class AIJobs:
             result, cached = self.artifacts.run(job["identity"], job["resultKey"], lambda:self.produce(job), lambda:self.get(job_id, job["requester"]))
             self.finish(job_id, lease, {"status": "COMPLETED", "resultKey": job["resultKey"], "leaseUntil": 0, "cached":cached})
             self.index(job)
+            self.media.on_event(job["roomId"], {"type":"ai:updated", "jobId":job_id})
             return True
         except Exception as error:
             terminal = isinstance(error, HTTPException) and error.status_code in (403, 404, 409, 422)

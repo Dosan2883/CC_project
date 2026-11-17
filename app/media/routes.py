@@ -110,8 +110,8 @@ def correct_page(media_id: str, page: int, body: PageCorrection, user: str = Dep
     asset = media_member(media_id, user)
     if body.language not in LANGUAGES:
         raise HTTPException(422, "INVALID_LANGUAGE")
-    record = db.get("MEDIA", "ASSET#" + media_id)
     result = media_svc.transcript(media_id)
+    record = db.get("MEDIA", "ASSET#" + media_id)
     if not 1 <= page <= len(result["pages"]):
         raise HTTPException(422, "INVALID_PAGE")
     if body.version != result.get("version", 1):
@@ -128,10 +128,13 @@ def correct_page(media_id: str, page: int, body: PageCorrection, user: str = Dep
     if not member:
         raise HTTPException(403, "NOT_A_MEMBER")
     try:
+        from app.ai.refresh import request as refresh_request
         db.commit([room.change(room.value, check=True), member.change(member.value, check=True),
-                   record.change({**record.value, "transcriptKey": key, "extractionVersion": result["version"]})])
+                   record.change({**record.value, "transcriptKey": key, "extractionVersion": result["version"]}),
+                   refresh_request(asset["roomId"], {"mediaId":media_id}, key)])
     except Conflict:
         raise HTTPException(409, "VERSION_CONFLICT")
+    media_svc.on_event(asset["roomId"], {"type":"source:updated", "mediaId":media_id, "version":result["version"]})
     return result
 
 
@@ -217,3 +220,61 @@ def media_transcript(media_id: str, user: str = Depends(current_user)):
         return media_svc.transcript(media_id)
     except MediaError as e:
         raise HTTPException(e.status, e.code)
+
+
+class SegmentCorrection(BaseModel):
+    version: int = Field(ge=1)
+    text: str = Field(max_length=4000)
+
+
+@router.patch("/api/media/{media_id}/segments/{index}")
+def correct_segment(media_id: str, index: int, body: SegmentCorrection, user: str = Depends(current_user)):
+    from app.ai.refresh import request
+    asset = media_member(media_id, user)
+    result = media_svc.transcript(media_id)
+    record = db.get("MEDIA", "ASSET#" + media_id)
+    if not 0 <= index < len(result.get("segments", [])):
+        raise HTTPException(422, "INVALID_SEGMENT")
+    if result.get("version", 1) != body.version:
+        raise HTTPException(409, "VERSION_CONFLICT")
+    result.setdefault("originalSegments", [dict(s) for s in result["segments"]])
+    result["segments"][index].update(text=body.text, needsReview=False, correctedBy=user)
+    result["version"] = body.version + 1
+    key = f"extracted/{media_id}/revision-{uuid.uuid4().hex}.json"
+    media_svc.storage.put(key, json.dumps(result, ensure_ascii=False).encode())
+    room = room_repo.record(asset["roomId"])
+    member = db.get("ROOM#" + asset["roomId"], "MEMBER#" + user)
+    if not member:
+        raise HTTPException(403, "NOT_A_MEMBER")
+    try:
+        db.commit([room.change(room.value, check=True), member.change(member.value, check=True),
+                   record.change({**record.value, "transcriptKey":key, "extractionVersion":result["version"]}),
+                   request(asset["roomId"], {"mediaId":media_id}, key)])
+    except Conflict:
+        raise HTTPException(409, "VERSION_CONFLICT")
+    media_svc.on_event(asset["roomId"], {"type":"source:updated", "mediaId":media_id, "version":result["version"]})
+    return result
+
+
+@router.get("/api/media/{media_id}/subtitles")
+def subtitles(media_id: str, target: str = "original", consent: bool = False, user: str = Depends(current_user)):
+    from app.media.subtitles import webvtt
+    from app.core.runtime import translation
+    media_member(media_id, user)
+    transcript = media_svc.transcript(media_id)
+    segments = transcript.get("segments", [])
+    if target != "original":
+        if not consent:
+            raise HTTPException(422, "CONSENT_REQUIRED")
+        result = translation.translate_segments(media_id, target, user)
+        segments = result["segments"]
+        version = result["version"]
+        db.update("SUBTITLE#" + media_id, user + "#" + target, lambda _: {"user":user, "target":target})
+    else:
+        version = transcript.get("version", 1)
+    content = webvtt(segments, target != "original")
+    media_svc.storage.put(f"subtitles/{media_id}/{version}/{target}.vtt", content.encode())
+    media_member(media_id, user)
+    if media_svc.transcript(media_id).get("version", 1) != version:
+        raise HTTPException(409, "SOURCE_VERSION_CHANGED")
+    return Response(content, media_type="text/vtt", headers={"Cache-Control":"no-store", "X-Source-Version":str(version)})
