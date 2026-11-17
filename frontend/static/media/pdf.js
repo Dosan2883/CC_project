@@ -1,4 +1,4 @@
-/* PDF 파일 카드의 기능 4가지: 원본 보기, 전체 번역, 전체 요약, 본문 보기.
+/* PDF 파일 카드의 기능 3가지: 원본 보기, 전체 번역, 전체 요약.
    눌러서 열리는 창은 모두 떠 있는 창(floatwin.js)이라 위치와 크기를 마음대로 바꿀 수 있다. */
 const PDF_SUMMARY_PAGES = 20;     // 서버가 한 번에 받는 자료 수의 상한
 const PDF_SUMMARY_CHARS = 3500;   // 서버가 한 번에 요약하는 글자 수의 상한
@@ -9,7 +9,6 @@ function pdfButtons(m) {
     make(t("pdfOriginal"), () => openPdfOriginal(m)),
     make(t("pdfTranslateAll"), () => openPdfTranslateAll(m)),
     make(t("pdfSummarizeAll"), () => pdfSummarizeAll(m)),
-    make(t("viewText"), () => openPdfText(m)),
   ];
 }
 
@@ -73,21 +72,13 @@ async function openPdfOriginal(m) {
   show(1);
 }
 
-/* 본문 보기: 추출된 글자를 쪽마다 보여 주고, 기존의 쪽별 번역·수정·OCR 버튼도 그대로 쓴다. */
-async function openPdfText(m) {
-  const win = openFloatWindow(`${m.filename} · ${t("viewText")}`, {width: 540, height: 600});
-  const text = el("div", "file-text");
-  win.body.append(text);
-  try { await fillDocument(text, m.mediaId); } catch { text.textContent = t("failed"); }
-}
-
 /* 전체 번역: 쪽을 차례로 번역해 오는 대로 보여 준다. 중간에 닫거나 한도를 넘으면 멈춘다. */
 async function openPdfTranslateAll(m) {
   if (!ensureConsent()) return;
   let pages;
   try { pages = await pdfPages(m.mediaId); } catch { return toast(t("failed")); }
   if (!pages.length) return toast(t("emptyText"));
-  const target = itemTarget(`file:${m.mediaId}`), epoch = itemEpoch(`file:${m.mediaId}`), generation = viewGeneration, authToken = token;
+  const target = targetLang, epoch = itemEpoch(`file:${m.mediaId}`), generation = viewGeneration, authToken = token;
   const win = openFloatWindow(`${m.filename} · ${t("pdfTranslateAll")} (${LANG_NAMES[target]})`, {width: 520, height: 620});
   const status = el("small", "pdf-status"), list = el("div", "pdf-results");
   win.body.append(status, list);

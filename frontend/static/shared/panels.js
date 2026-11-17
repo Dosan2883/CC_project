@@ -1,25 +1,36 @@
-/* 왼쪽 방 목록 접기/펼치기, 오른쪽 요약 목록 패널(접기/펼치기). 문서와 음성은 채팅의 파일 카드 바로 아래에서 보므로 패널에는 요약 목록만 둔다. */
+/* 왼쪽 방 목록 접기/펼치기, 오른쪽 요약 목록 패널. 패널은 상단의 회의 요약 버튼으로 열고 닫는다(별도 버튼 없음). 문서와 음성은 채팅의 파일 카드 바로 아래에서 본다. */
 let sideCollapsed = false;
-let docOpen = false;          // 오른쪽 요약 목록 패널이 펼쳐져 있는지 (접으면 오른쪽 가장자리 버튼 줄만 남는다)
+let docOpen = false;          // 오른쪽 요약 목록 패널이 열려 있는지 (닫으면 패널 자체가 사라진다)
 let summaryGeneration = 0;
 try { sideCollapsed = localStorage.getItem("sideCollapsed") === "1"; } catch { /* 저장소를 못 쓰면 기본값 */ }
 
 function inRoom() { return typeof currentRoom !== "undefined" && !!currentRoom; }
 
 function applyPanels() {
-  const app = $("app");
-  const state = !inRoom() ? "closed" : docOpen ? "open" : "folded";
+  const app = $("app"), open = inRoom() && docOpen;
   app.classList.toggle("side-collapsed", sideCollapsed);
-  app.classList.toggle("doc-open", state === "open");
-  app.classList.toggle("doc-folded", state === "folded");
+  app.classList.toggle("doc-open", open);
+  app.classList.toggle("summary-selecting", open);  // 패널이 열려 있는 동안에만 메시지마다 선택 칸이 보인다
   $("sideOpen").hidden = !sideCollapsed;
   $("sideFold").title = t("sideFold");
   $("sideOpen").title = t("sideOpen");
-  $("docPanel").hidden = state === "closed";
-  $("docPanel").dataset.state = state;
-  $("docFold").textContent = docOpen ? "→" : "←";  // 열려 있으면 오른쪽으로 접고, 접혀 있으면 왼쪽으로 펼친다
-  $("docFold").title = t(docOpen ? "docFold" : "docUnfold");
+  $("docPanel").hidden = !open;
   $("docTitle").textContent = t("summaryList");
+  $("roomSummary").ariaExpanded = String(open);
+  refreshSelectionBar();
+}
+
+/* 요약 목록 위쪽의 선택 막대: 고른 메시지 수를 보여 주고, 고른 것으로 회의 요약을 만든다 */
+function refreshSelectionBar() {
+  const count = typeof aiSelections === "undefined" ? 0 : aiSelections.size;
+  $("sumCount").textContent = t("summarySelected").replace("{n}", count);
+  $("sumGenerate").disabled = $("sumClear").disabled = count === 0;
+}
+
+function clearSelection() {
+  if (typeof aiSelections === "undefined") return;
+  for (const input of document.querySelectorAll(".summary-choice")) input.checked = false;
+  aiSelections.clear();
 }
 
 function closeDocPanel() {  // 방을 바꾸거나 나갈 때: 목록을 비우고 접고, 재생 중인 음성은 멈춘다
@@ -27,6 +38,7 @@ function closeDocPanel() {  // 방을 바꾸거나 나갈 때: 목록을 비우�
   if (typeof closeAllFloatWindows === "function") closeAllFloatWindows();
   summaryGeneration++;
   $("sumView").replaceChildren();
+  clearSelection();
   docOpen = false;
   applyPanels();
 }
@@ -109,9 +121,15 @@ $("sideFold").onclick = $("sideOpen").onclick = () => {
   try { localStorage.setItem("sideCollapsed", sideCollapsed ? "1" : "0"); } catch { /* 저장 실패는 무시 */ }
   applyPanels();
 };
-$("docFold").onclick = () => {
-  docOpen = !docOpen;
+function toggleSummaryPanel(open = !docOpen) {  // 회의 요약 버튼이 요약 목록 패널을 열고 닫는다
+  if (!inRoom()) return;
+  docOpen = open;
+  if (!docOpen) clearSelection();
   applyPanels();
-  if (docOpen) loadSummaries();  // 펼칠 때마다 최신 요약 목록을 읽는다
-};
+  if (docOpen) loadSummaries();  // 열 때마다 최신 요약 목록을 읽는다
+}
+$("roomSummary").onclick = () => toggleSummaryPanel();
+$("docFold").onclick = () => toggleSummaryPanel(false);
+$("sumGenerate").onclick = () => runAi([...aiSelections.values()], "meeting-summary");
+$("sumClear").onclick = clearSelection;
 applyPanels();

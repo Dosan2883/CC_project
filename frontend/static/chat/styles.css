@@ -12,8 +12,9 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; }
   .empty-state { flex:1; display:grid; place-content:center; text-align:center; color:var(--muted); gap:8px; padding:24px; }
   .empty-state .mark { margin:0 auto; width:52px; height:52px; font-size:22px; border-radius:16px; }
   #chat { display:none; flex:1; min-height:0; flex-direction:column; }
-  .chat-head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
-  .chat-head .titles { flex:1; min-width:0; }
+  .chat-head { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
+  .chat-head button, .chat-head summary { white-space:nowrap; }
+  .chat-head .titles { flex:1 1 140px; min-width:0; }
   .chat-head strong { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #members { color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #status { font-size:12px; color:var(--muted); }

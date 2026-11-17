@@ -11,6 +11,9 @@ function applyI18n() {
   $("privPw").placeholder = t("pwEnter");
   $("attach").title = t("attach");
   $("srcLang").title = t("srcLang");
+  $("docFold").title = t("panelClose");
+  $("roomMenuButton").title = $("roomMenuButton").ariaLabel = t("roomMenu");
+  if (typeof refreshSelectionBar === "function") refreshSelectionBar();
   setAuthMode(authMode);
   renderRooms();
   renderReadReceipts();

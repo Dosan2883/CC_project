@@ -91,11 +91,17 @@
           <div id="members"></div>
         </div>
         <span id="status"></span>
-        <button type="button" id="participants" class="ghost"></button>
-        <label class="tl"><span data-i="target"></span><select id="tgtLang"></select></label>
-        <button id="roomSummary" class="ghost soon" data-i="roomSummary"></button>
-        <button id="leave" class="ghost danger" data-i="leave"></button>
-        <button id="deleteRoom" class="ghost danger" data-i="deleteRoom" hidden></button>
+        <button type="button" id="roomSummary" class="ghost" data-i="roomSummary" aria-expanded="false"></button>
+        <details id="roomMenu" class="room-menu">
+          <summary id="roomMenuButton" class="ghost">⚙</summary>
+          <div class="room-menu-list">
+            <button type="button" id="participants" class="ghost"></button>
+            <label class="tl"><span data-i="target"></span><select id="tgtLang"></select></label>
+            <hr class="menu-sep">
+            <button type="button" id="leave" class="ghost danger" data-i="leave"></button>
+            <button type="button" id="deleteRoom" class="ghost danger" data-i="deleteRoom" hidden></button>
+          </div>
+        </details>
       </div>
       <div id="log"></div>
       <form id="form">
@@ -117,12 +123,13 @@
   </main>
 
   <div id="docPanel" hidden>
-    <div class="doc-rail">
-      <button type="button" id="docFold" class="ghost fold-btn">←</button>
-      <span class="rail-label" data-i="summaryList"></span>
-    </div>
     <div class="doc-main">
-      <div class="doc-head"><strong id="docTitle"></strong></div>
+      <div class="doc-head"><strong id="docTitle"></strong><button type="button" id="docFold" class="ghost fold-btn">✕</button></div>
+      <div id="sumSelectBar" class="sel-bar">
+        <span id="sumCount"></span>
+        <button type="button" id="sumClear" class="ghost" data-i="summaryClear"></button>
+        <button type="button" id="sumGenerate" class="primary" data-i="summaryMake"></button>
+      </div>
       <div id="sumView"></div>
     </div>
   </div>
