@@ -110,6 +110,7 @@ function leaveView() {  // 방을 떠나지 않고 화면만 닫는다
 }
 $("back").onclick = leaveView;
 $("leave").onclick = async () => {
+  $("roomMenu").open = false;
   if (!confirm(t("confirmLeave"))) return;
   if (!currentRoom) return;
   const roomId = currentRoom.roomId, generation = viewGeneration, requestToken = token;
@@ -124,6 +125,7 @@ $("leave").onclick = async () => {
   }
 };
 $("deleteRoom").onclick = async () => {
+  $("roomMenu").open = false;
   if (!currentRoom || currentRoom.createdBy !== me || !confirm(t("confirmDeleteRoom"))) return;
   const roomId = currentRoom.roomId;
   try {
@@ -131,6 +133,11 @@ $("deleteRoom").onclick = async () => {
     if (currentRoom?.roomId === roomId) { leaveView(); toast(t("roomDeleted")); }
   } catch { toast(t("failed")); }
 };
+
+document.addEventListener("click", event => {  // 방 메뉴 바깥을 누르면 닫는다
+  const menu = $("roomMenu");
+  if (menu.open && (!menu.contains(event.target) || event.target.closest?.(".room-menu-list button"))) menu.open = false;  // 바깥을 누르거나 항목(버튼)을 고르면 닫는다
+});
 
 function connect() {
   $("status").textContent = t(retry ? "reconnecting" : "connecting");
@@ -188,7 +195,6 @@ function addSystem(text) { const d = document.createElement("div"); d.className 
 const messageViews = new Map();
 function addMessage(m) {
   const mine = m.sender === me;
-  let originalView = false;
   // 같은 사람이 2분 안에 이어서 보내면 아바타·이름을 생략하고 묶어서 보여 준다.
   const cont = prevMsg && prevMsg.sender === m.sender && m.sentAt - prevMsg.sentAt < 120000;
   prevMsg = m;
@@ -215,25 +221,12 @@ function addMessage(m) {
     selection.onchange = () => updateSummarySelection(m.messageSeq, {kind:"message", messageSeq:m.messageSeq}, m.bodyOriginal.length, selection.checked);
     acts.append(selection);
     const clearTranslation = () => { body.querySelectorAll(".translation").forEach(e => e.remove()); translateButton.textContent = t("translate"); };
-    acts.append(targetPicker(`message:${currentRoom.roomId}:${m.messageSeq}`, clearTranslation));
-    const sourceView = document.createElement("button"); sourceView.type = "button"; sourceView.textContent = "원문/수정본";
-    sourceView.onclick = () => { originalView = !originalView; bubble.textContent = originalView ? m.bodyOriginal : (m.bodyCurrent ?? m.bodyOriginal); };
-    acts.append(sourceView);
     const update = value => {
-      Object.assign(m, value); clearTranslation(); bubble.textContent = originalView ? m.bodyOriginal : (m.bodyCurrent ?? m.bodyOriginal);
-      badge.textContent = m.sourceLanguage + (m.languageDetection?.needsReview ? " · 확인 필요" : "");
+      Object.assign(m, value); clearTranslation(); bubble.textContent = m.bodyCurrent ?? m.bodyOriginal;
+      badge.textContent = m.sourceLanguage;
     };
     messageViews.set(m.messageSeq, update);
     update(m);
-    if (mine) {
-      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "수정";
-      edit.onclick = async () => {
-        const text = prompt("메시지 수정", m.bodyCurrent ?? m.bodyOriginal); if (text == null || !text.trim()) return;
-        try { update(await api(`/api/rooms/${currentRoom.roomId}/messages/${m.messageSeq}`, "PATCH", {version:m.revision || 1, text, language:"auto"})); }
-        catch (error) { toast(error.code || t("failed")); }
-      };
-      acts.append(edit);
-    }
   }
   acts.append(translateButton, summarizeButton);
   body.append(meta, bubble);
@@ -259,12 +252,12 @@ async function translateMessage(m, bubble, button) {
     if (!confirm(t("translateConsent"))) return;
     rememberTranslateConsent();
   }
-  const roomId = currentRoom.roomId, target = itemTarget(`message:${currentRoom.roomId}:${m.messageSeq}`), revision = m.revision || 1, generation = viewGeneration, authToken = token;
+  const roomId = currentRoom.roomId, target = targetLang, revision = m.revision || 1, generation = viewGeneration, authToken = token;
   button.disabled = true; button.textContent = t("translating");
   try {
     const result = await api("/api/ai/translate", "POST", { roomId, messageSeq: m.messageSeq, target });
     if (currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;  // 이전 방·계정의 응답은 폐기
-    if ((m.revision || 1) !== revision || target !== itemTarget(`message:${roomId}:${m.messageSeq}`)) return;
+    if ((m.revision || 1) !== revision || target !== targetLang) return;
     const box = document.createElement("div"); box.className = "translation";
     const label = document.createElement("small"); label.textContent = `${t("translated")} · ${LANG_NAMES[target]}`;
     const text = document.createElement("div"); text.textContent = result.translated;  // textContent로 XSS 방지

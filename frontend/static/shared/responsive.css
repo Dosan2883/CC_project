@@ -6,16 +6,14 @@
     #app.side-collapsed:not(.in-room) > aside { display:flex; }
     #sideFold, .side-open { display:none; }
     #app.side-collapsed .chat-head { padding-left:12px; }
-    #docPanel { position:fixed; inset:0; z-index:20; grid-column:auto; border-left:0; }
+    #docPanel { position:fixed; inset:auto 0 0 0; height:52dvh; z-index:20; grid-column:auto; border-left:0; border-top:1px solid var(--line); box-shadow:0 -8px 24px rgba(20,30,60,.12); }  /* 아래에서 올라오는 시트: 위쪽 채팅이 보여야 메시지를 고를 수 있다 */
     #app:not(.in-room) main { display:none; }
     #app.in-room aside { display:none; }
     #back { display:inline-block; padding:6px 10px; }
     .chat-head { flex-wrap:wrap; padding:10px 12px; gap:8px; }
     .chat-head .titles { flex:1 1 0; }
     #status { display:none; }
-    .tl { order:3; flex:1 1 100%; }
-    .tl select { flex:1; }
-    #leave { order:2; padding:6px 10px; }
+    .room-menu { order:2; }
     .body { max-width:84%; }
     #form { padding:10px 12px; gap:6px; }
     #form select { max-width:92px; padding:8px; }

@@ -1,5 +1,11 @@
 /* Selected server-side sources only; no browser-supplied source text. */
-const aiSelections = new Map();
+/* 요약 목록 위쪽 선택 막대가 개수를 바로 보여 주도록, 선택이 바뀔 때마다 막대를 갱신한다. */
+class SelectionMap extends Map {
+  set(key, value) { super.set(key, value); refreshSelectionBar(); return this; }
+  delete(key) { const removed = super.delete(key); refreshSelectionBar(); return removed; }
+  clear() { super.clear(); refreshSelectionBar(); }
+}
+const aiSelections = new SelectionMap();
 /* chat/index.js와 auth/index.js가 부르는 함수. 방을 바꾸거나 나가면 선택을 비우고, 메시지 체크박스는 회의 요약 선택(aiSelections)에 반영한다. */
 function resetAiPanel() { aiSelections.clear(); }
 function updateSummarySelection(key, source, size, checked) {
@@ -74,7 +80,7 @@ async function runAi(sources, kind = "summarize") {
   const roomId = currentRoom.roomId, generation = viewGeneration, authToken = token;
   // 번역은 번역 대상 언어로, 요약은 앱 표시 언어로 만든다. 근거 원문은 번역 대상 언어로 보여 준다.
   const firstSource = sources[0];
-  const selectedTarget = firstSource?.mediaId ? itemTarget(`file:${firstSource.mediaId}`) : firstSource?.kind === "message" ? itemTarget(`message:${currentRoom.roomId}:${firstSource.messageSeq}`) : targetLang;
+  const selectedTarget = targetLang;
   const outputLanguage = kind === "translate" ? selectedTarget : locale, evidenceLanguage = selectedTarget;
   const win = openFloatWindow(kind === "translate" ? t("translate") : kind === "meeting-summary" ? t("roomSummary") : t("summarize"), {width: 480, height: 480});
   const state = document.createElement("p"), output = document.createElement("pre");
@@ -121,8 +127,6 @@ async function runAi(sources, kind = "summarize") {
   } catch (e) { if (active()) state.textContent = t("aiErr_" + e.code) || e.code || t("failed"); }
 }
 
-$("roomSummary").classList.remove("soon");
-$("roomSummary").onclick = () => runAi([...aiSelections.values()], "meeting-summary");
 
 function pageReview(mediaId, page, pre, transcript) {
   const controls = document.createElement("div");
