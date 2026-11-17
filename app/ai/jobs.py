@@ -12,8 +12,7 @@ from app.core.database import Change, Conflict
 from app.media.queue import MediaWorker
 from app.media.service import MediaError
 from app.ai.contract import MODEL_VERSION
-from app.ai.service import LANGUAGE_NAMES
-from app.ai.service import split_text
+from app.ai.service import LANGUAGE_NAMES, split_text, text_matches_language
 from app.ai.artifacts import Artifacts, digest
 
 SUMMARY_CACHE_VERSION = "2"  # 요약 프롬프트나 방식을 크게 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
@@ -40,7 +39,9 @@ class AIJobs:
     def __init__(self, db, rooms, media, translation, sqs=None, queue_url=""):
         self.db, self.rooms, self.media, self.translation = db, rooms, media, translation
         self.queue = MediaWorker(self, sqs, queue_url)
-        self.artifacts = Artifacts(db, media.storage)
+        self.artifacts = Artifacts(db, lambda: self.media.storage)
+        self._migrated_rooms = set()
+        self._migration_lock = threading.Lock()
         self.translation.jobs = self
 
     def select(self, room, sources, user):
@@ -147,8 +148,6 @@ class AIJobs:
             raise HTTPException(error.status, error.code)
         if sum(len(split_text(e["text"], 2800)) for e in evidence) > 16:
             raise HTTPException(422, "TOO_MANY_CHUNKS")
-        if body["target"] not in LANGUAGE_NAMES or body["sourceLanguage"] not in (*LANGUAGE_NAMES, "auto", "und"):
-            raise HTTPException(422, "INVALID_LANGUAGE")
         identity = {"roomId":body["roomId"], "kind":body["kind"], "sourceLanguage":body["sourceLanguage"], "target":body["target"],
                     "scope": body["sources"], "evidence":[digest(e) for e in evidence],
                     "modelVersion":MODEL_VERSION, "promptVersion":SUMMARY_CACHE_VERSION}
@@ -160,14 +159,20 @@ class AIJobs:
             if previous.value["status"] != "COMPLETED":
                 self.db.update("AI_JOBS", job_id, lambda value: {**value, "status":"COMPLETED", "resultKey":result_key, "leaseUntil":0})
             self.index(self.db.get("AI_JOBS", job_id).value)
-            return {**self.get(job_id, user), "cached":True}
+            result = {**self.get(job_id, user), "cached":True}
+            if body["kind"] != "translate":
+                result.update({"existing":True, "entryId":job_id})
+            return result
         if previous and saved is None and previous.value["status"] != "COMPLETED":
             return self.get(job_id, user)
+        created_at = int(time.time() * 1000)
+        custom_title = " ".join(str(body.get("title") or "").split())[:60]
+        default_title = ("요약 · " if body["kind"] != "translate" else "번역 · ") + evidence[0]["text"][:32]
         job = {**body, "jobId": job_id, "requester": user, "status": "PENDING", "attempts": 0,
                "availableAt": 0, "leaseUntil": 0, "deadLetter": False, "evidence": evidence,
                "sourceHash": self.digest(evidence), "resultKey": result_key, "identity":identity, "resultId":job_id,
                "sourceVersions":[{"source":e["source"], "version":e.get("version", 1)} for e in evidence],
-               "cached": saved is not None, "title": ("요약 · " if body["kind"] != "translate" else "번역 · ") + evidence[0]["text"][:32], "createdAt": int(time.time() * 1000)}
+               "cached": saved is not None, "title":custom_title or default_title, "createdAt":created_at, "updatedAt":created_at}
         if saved is None:
             legacy = self.legacy_result(job)
             if legacy is not None:
@@ -207,10 +212,20 @@ class AIJobs:
         if self.digest(current) != job["sourceHash"]:
             raise HTTPException(409, "SOURCE_VERSION_CHANGED")
         result = {k: v for k, v in job.items() if k not in ("evidence", "leaseToken", "consent", "identity")}
+        if job.get("kind") != "translate":
+            result["entryId"] = job_id
+            result["title"] = job.get("title") or self.default_title(job)
+            result["updatedAt"] = job.get("updatedAt") or job.get("createdAt")
         if job["status"] == "COMPLETED":
             raw = json.loads(self.media.storage.get(job["resultKey"]))
             result["result"] = raw.get("result", raw)
         return result
+
+    @staticmethod
+    def default_title(job):
+        evidence = job.get("evidence") or [{}]
+        prefix = "요약 · " if job.get("kind") != "translate" else "번역 · "
+        return prefix + evidence[0].get("text", "")[:32]
 
     @staticmethod
     def result_key(body, result_id):
@@ -225,10 +240,11 @@ class AIJobs:
         return f"{prefix}/{folder}/{result_id}/result.json"
 
     def index(self, job):
-        keys = ("jobId", "resultId", "roomId", "kind", "target", "sourceLanguage", "sources", "sourceHash", "sourceVersions", "resultKey", "createdAt", "title", "requester")
+        keys = ("jobId", "resultId", "roomId", "kind", "target", "sourceLanguage", "sources", "sourceHash", "sourceVersions", "resultKey", "createdAt", "updatedAt", "title", "requester")
         value = {k:job.get(k) for k in keys}
         value["sourceVersions"] = value["sourceVersions"] or [{"source":e["source"], "version":e.get("version", 1)} for e in job.get("evidence", [])]
-        value["title"] = value["title"] or ("요약 · " if job.get("kind") != "translate" else "번역 · ") + (job.get("evidence") or [{}])[0].get("text", "")[:32]
+        value["title"] = value["title"] or self.default_title(job)
+        value["updatedAt"] = value["updatedAt"] or value["createdAt"]
         self.db.update("ROOM_RESULTS#" + job["roomId"], job["jobId"], lambda _: value)
         hidden = self.db.get("AI_RESULT_HIDDEN#" + job["roomId"], job["jobId"])
         if hidden:
@@ -236,25 +252,27 @@ class AIJobs:
 
     def list_results(self, room, user):
         self.rooms.require_member(room, user)
-        # 이전 버전은 완료 결과를 AI_JOBS에만 기록했다. 기존 결과도 새 목록으로 옮긴다.
         hidden = {record.sk for record in self.db.query("AI_RESULT_HIDDEN#" + room)}
-        indexed = {record.value.get("jobId") for record in self.db.query("ROOM_RESULTS#" + room)}
-        old_summaries = {record.value.get("jobId"):record.value for record in self.db.query("ROOM_SUMMARIES#" + room)}
-        for record in self.db.query("AI_JOBS"):
-            job = record.value
-            if job.get("roomId") == room and job.get("status") == "COMPLETED" and job.get("resultKey") and job.get("jobId") not in indexed and job.get("jobId") not in hidden:
-                legacy = old_summaries.get(job.get("jobId"))
-                if legacy and legacy.get("title"):
-                    job = self.db.update("AI_JOBS", job["jobId"], lambda value: {**value, "title":legacy["title"]})
-                self.index(job)
+        with self._migration_lock:
+            if room not in self._migrated_rooms:
+                # 이전 버전은 완료 결과를 AI_JOBS에만 기록했다. 기존 결과는 방별로 한 번만 새 목록으로 옮긴다.
+                indexed = {record.value.get("jobId") for record in self.db.query("ROOM_RESULTS#" + room)}
+                old_summaries = {record.value.get("jobId"):record.value for record in self.db.query("ROOM_SUMMARIES#" + room)}
+                for record in self.db.query("AI_JOBS"):
+                    job = record.value
+                    if job.get("roomId") == room and job.get("status") == "COMPLETED" and job.get("resultKey") and job.get("jobId") not in indexed and job.get("jobId") not in hidden:
+                        legacy = old_summaries.get(job.get("jobId"))
+                        if legacy and legacy.get("title"):
+                            job = self.db.update("AI_JOBS", job["jobId"], lambda value: {**value, "title":legacy["title"]})
+                        self.index(job)
+                self._migrated_rooms.add(room)
         values = []
         for record in self.db.query("ROOM_RESULTS#" + room):
-            value = record.value
+            value = dict(record.value)
             if value.get("jobId") in hidden:
                 continue
             try:
-                current = self.select(room, value["sources"], user)
-                value["stale"] = self.digest(current) != value["sourceHash"]
+                value["stale"] = not self.source_versions_match(room, value, user)
             except HTTPException as error:
                 if error.status_code not in (404, 409, 422):
                     raise
@@ -263,7 +281,44 @@ class AIJobs:
         return sorted(values, key=lambda v:v["createdAt"], reverse=True)
 
     def list_summaries(self, room, user):
-        return [item | {"entryId":item["jobId"]} for item in self.list_results(room, user) if item.get("kind") != "translate"]
+        return [({key:value for key, value in item.items() if key != "resultKey"} | {"entryId":item["jobId"]})
+                for item in self.list_results(room, user) if item.get("kind") != "translate"]
+
+    @staticmethod
+    def _version_signature(versions):
+        return sorted((json.dumps(item["source"], sort_keys=True, separators=(",", ":")), item.get("version", 1)) for item in versions)
+
+    def source_versions_match(self, room, result, user):
+        saved = result.get("sourceVersions") or []
+        if not saved or any(not isinstance(item.get("source"), dict) for item in saved):
+            current = self.select(room, result["sources"], user)
+            return self.digest(current) == result.get("sourceHash")
+
+        current = []
+        for item in saved:
+            source = item["source"]
+            if source.get("kind") == "message":
+                record = self.db.get("ROOM#" + room, f'MESSAGE#{source["messageSeq"]:020d}')
+                if not record or record.value.get("media"):
+                    raise HTTPException(404, "MESSAGE_NOT_FOUND")
+                version = record.version
+            else:
+                try:
+                    asset = self.media.live_asset(source["mediaId"])
+                except MediaError as error:
+                    raise HTTPException(error.status, error.code)
+                if asset["roomId"] != room:
+                    raise HTTPException(404, "MEDIA_NOT_FOUND")
+                if not asset.get("transcriptKey"):
+                    raise HTTPException(409, "SOURCE_VERSION_CHANGED")
+                version = asset.get("extractionVersion")
+                if version is None:
+                    # Legacy assets do not store extractionVersion; load their evidence once for a correct comparison.
+                    current = self.select(room, result["sources"], user)
+                    current = [{"source":entry["source"], "version":entry.get("version", 1)} for entry in current]
+                    return self._version_signature(saved) == self._version_signature(current)
+            current.append({"source":source, "version":version})
+        return self._version_signature(saved) == self._version_signature(current)
 
     def read_summary(self, room, entry_id, user):
         self.rooms.require_member(room, user)
@@ -278,7 +333,7 @@ class AIJobs:
                 raise
             raw = json.loads(self.media.storage.get(job.value["resultKey"]))
             result, stale = raw.get("result", raw), True
-        return {"entryId":entry_id, "title":job.value.get("title", "요약"), "result":result, "stale":stale}
+        return {"entryId":entry_id, "title":job.value.get("title") or self.default_title(job.value), "result":result, "stale":stale}
 
     def rename_summary(self, room, entry_id, title, user):
         self.rooms.require_member(room, user)
@@ -290,7 +345,8 @@ class AIJobs:
             raise HTTPException(404, "SUMMARY_NOT_FOUND")
         if record.value.get("requester") != user:
             raise HTTPException(403, "NOT_SUMMARY_OWNER")
-        updated = self.db.update("AI_JOBS", entry_id, lambda value: {**value, "title":title})
+        updated_at = int(time.time() * 1000)
+        updated = self.db.update("AI_JOBS", entry_id, lambda value: {**value, "title":title, "updatedAt":updated_at})
         self.index(updated)
         return {"entryId":entry_id, "title":title}
 
@@ -322,7 +378,7 @@ class AIJobs:
         if len(evidence[0]["text"]) > (MAX_CHARS if source["kind"] == "message" else MAX_PAGE_CHARS):
             raise HTTPException(422, "TEXT_TOO_LONG" if source["kind"] == "message" else "PAGE_TOO_LONG")
         job = self.submit({"roomId":room, "kind":"translate", "sourceLanguage":"auto", "target":target, "sources":[source], "consent":True}, user)
-        cached = job["status"] == "COMPLETED"
+        cached = bool(job.get("cached"))
         if not cached and not self.translation.translator.configured:
             raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
         if job.get("errorCode") and job["errorCode"] != "AI_CALL_UNCERTAIN":
@@ -339,11 +395,12 @@ class AIJobs:
             if time.monotonic() >= deadline:
                 raise HTTPException(503, "RESULT_IN_PROGRESS")
             time.sleep(.05)
-        result = {"translated":job["result"]["text"], "target":target, "cached":cached or job["result"].get("flags", {}).get("cached", False)}
+        result = {"translated":job["result"]["text"], "target":target, "cached":cached or bool(job.get("cached")) or job["result"].get("flags", {}).get("cached", False)}
         if source["kind"] == "message":
             result["sameLanguage"] = job["result"].get("flags", {}).get("sameLanguage", False)
         else:
             result["page"] = source["page"]
+            result["sameLanguage"] = job["result"].get("flags", {}).get("sameLanguage", False)
         return result
 
     def summary_cache_key(self, job):
@@ -396,12 +453,30 @@ class AIJobs:
         if legacy is not None:
             return legacy
         pieces = []
+        translation_contexts = []
         for evidence in job["evidence"]:
+            translation_context = self.translation_context(job, evidence) if job["kind"] == "translate" else None
             for chunk in split_text(evidence["text"], 2800):
                 pieces.append(f'[{evidence["id"]}] {chunk}' if job["kind"] != "translate" else chunk)
+                if translation_context is not None:
+                    translation_contexts.append(translation_context)
         if len(pieces) > 16:
             raise HTTPException(422, "TOO_MANY_CHUNKS")
-        return self.generate_pieces(job, pieces, check)
+        return self.generate_pieces(job, pieces, check, translation_contexts)
+
+    def translation_context(self, job, evidence):
+        source = evidence["source"]
+        version = evidence.get("version", 1)
+        if source["kind"] == "message":
+            scope = {"room":job["roomId"], "message":source["messageSeq"], "version":version}
+        elif source["kind"] == "page":
+            scope = {"room":job["roomId"], "media":source["mediaId"], "page":source["page"], "version":version}
+        else:
+            scope = {"room":job["roomId"], "media":source.get("mediaId"), "kind":source["kind"], "source":source, "version":version}
+        source_language = self.translation.source_language(evidence.get("sourceLanguage"))
+        if not source_language:
+            source_language = self.translation.source_language(job.get("sourceLanguage"))
+        return {"scope":scope, "sourceLanguage":source_language}
 
     def legacy_result(self, job):
         legacy_evidence = [{k:v for k,v in e.items() if k != "sourceLanguage" and not (k == "version" and e["source"]["kind"] == "message")} for e in job["evidence"]]
@@ -423,17 +498,21 @@ class AIJobs:
                 return {**saved, "evidence":job["evidence"], "sourceHash":job["sourceHash"]}
         return None
 
-    def generate_pieces(self, job, pieces, check):
-        def generate(text, label):
+    def generate_pieces(self, job, pieces, check, translation_contexts=None):
+        translation_flags = []
+
+        def generate(text, label, translation_context=None):
             self.get(job["jobId"], job["requester"])
             identity = {"parent":job["identity"], "stage":label, "textHash":digest(text)}
             key = job["resultKey"].rsplit("/", 1)[0] + "/chunks/" + digest(identity) + ".json"
             def call():
-                source_language = self.translation.source_language(job["sourceLanguage"])
                 if job["kind"] == "translate":
-                    _, cached = self.translation.cached(job["target"], text, source_language, identity)
-                    if cached:
-                        return {"text":cached}
+                    source_language = (translation_context or {}).get("sourceLanguage")
+                    scope = (translation_context or {}).get("scope", identity)
+                    if source_language and not text_matches_language(text, source_language):
+                        return {"text":text, "flags":{"cached":False, "sameLanguage":True, "languageMismatch":True}}
+                    if source_language == job["target"]:
+                        return {"text":text, "flags":{"cached":False, "sameLanguage":True}}
                 def count(value):
                     if value.get("callsUsed", 0) >= 32:
                         raise HTTPException(422, "AI_TOTAL_CALL_LIMIT")
@@ -441,11 +520,16 @@ class AIJobs:
                 self.db.update("AI_JOBS", job["jobId"], count)
                 self.budget(job, text)
                 if job["kind"] == "translate":
-                    output, _ = self.translation.translate_text(text, job["target"], job["requester"], source=source_language, context=identity)
-                    return {"text":output}
+                    output, cached = self.translation.translate_text(text, job["target"], job["requester"], source=source_language, context=scope)
+                    return {"text":output, "flags":{"cached":cached}}
                 return {"text":check(self.translation.translator.summarize(text, LANGUAGE_NAMES[job["target"]]))}
-            return self.artifacts.run(identity, key, call, lambda:self.get(job["jobId"], job["requester"]))[0]["text"]
-        outputs = [generate(text, f"map-{i}") for i, text in enumerate(pieces)]
+            result, cached_artifact = self.artifacts.run(identity, key, call, lambda:self.get(job["jobId"], job["requester"]))
+            if job["kind"] == "translate":
+                flags = result.get("flags", {})
+                translation_flags.append({**flags, "cached":bool(flags.get("cached") or cached_artifact)})
+            return result["text"]
+        outputs = [generate(text, f"map-{i}", (translation_contexts or [])[i] if i < len(translation_contexts or []) else None)
+                   for i, text in enumerate(pieces)]
         output = "\n\n".join(outputs)
         if job["kind"] != "translate" and len(pieces) > 1:
             for level in range(4):
@@ -455,7 +539,14 @@ class AIJobs:
                     break
             else:
                 raise HTTPException(422, "SUMMARY_REDUCTION_LIMIT")
-        return {"text":output, "evidence":job["evidence"], "sourceHash":job["sourceHash"]}
+        result = {"text":output, "evidence":job["evidence"], "sourceHash":job["sourceHash"]}
+        if job["kind"] == "translate" and translation_flags:
+            result["flags"] = {
+                "cached":all(flags.get("cached", False) for flags in translation_flags),
+                "sameLanguage":all(flags.get("sameLanguage", False) for flags in translation_flags),
+                "languageMismatch":any(flags.get("languageMismatch", False) for flags in translation_flags),
+            }
+        return result
 
     def work(self, job_id):
         record = self.db.get("AI_JOBS", job_id)

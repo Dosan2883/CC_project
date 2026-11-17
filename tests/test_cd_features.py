@@ -89,8 +89,8 @@ class FeatureChecks(unittest.TestCase):
         self.assertEqual(detail["result"]["text"], "결정 [1]")
         again = self.jobs.submit(self.body, "owner")  # 같은 선택이면 새 작업·새 항목 없이 기존 요약을 알려 준다
         self.assertTrue(again["existing"])
-        self.assertEqual((again["entryId"], again["title"]), (listed[0]["entryId"], "금요일 배포 요약"))
-        self.assertNotIn("jobId", again)
+        self.assertEqual((again["entryId"], again["jobId"], again["title"]), (listed[0]["entryId"], listed[0]["entryId"], "금요일 배포 요약"))
+        self.assertEqual((again["status"], again["cached"], again["existing"]), ("COMPLETED", True, True))
         listed = self.jobs.list_summaries("r", "owner")
         self.assertEqual((len(listed), listed[0]["title"], self.model.calls), (1, "금요일 배포 요약", 1))
         self.assertEqual(self.jobs.rename_summary("r", listed[0]["entryId"], "새 이름", "owner")["title"], "새 이름")
@@ -113,10 +113,11 @@ class FeatureChecks(unittest.TestCase):
         self.assertEqual(self.jobs.list_summaries("r", "owner"), [])
         with self.assertRaises(HTTPException):
             self.jobs.delete_summary("r", entry, "owner")
-        again = self.jobs.submit(self.body, "owner")  # 지운 뒤에는 같은 선택도 새로 요약한다
-        self.assertNotIn("existing", again)
+        again = self.jobs.submit(self.body, "owner")  # 지운 결과의 검증된 아티팩트를 다시 사용한다
+        self.assertTrue(again["existing"])
+        self.assertTrue(again["cached"])
         self.assertTrue(self.jobs.work(again["jobId"]))
-        self.assertEqual(self.model.calls, 2)
+        self.assertEqual(self.model.calls, 1)
 
     def test_delete_file_owner_only_and_idempotent(self):
         from app.core.database import Change

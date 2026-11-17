@@ -257,7 +257,7 @@ class MediaService:
         if not asset["transcriptKey"].startswith(prefix):
             key = prefix + str(result.get("version", 1)) + "/legacy.json"
             self.storage.put(key, raw)
-            self.db.update("MEDIA", "ASSET#" + media_id, lambda value: {**value, "transcriptKey":key} if value.get("transcriptKey") == asset["transcriptKey"] else value)
+            self.db.update("MEDIA", "ASSET#" + media_id, lambda value: {**value, "transcriptKey":key, "extractionVersion":result.get("version", 1)} if value.get("transcriptKey") == asset["transcriptKey"] else value)
         if asset.get("s3Key") and asset.get("ext") and not asset["s3Key"].startswith(f'rooms/{asset["roomId"]}/files/{media_id}/'):
             self.original(media_id)
         return result

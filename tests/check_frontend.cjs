@@ -7,13 +7,15 @@ const root = path.resolve(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "frontend/index.html"), "utf8");
 class Element {
   constructor() {
-    this.style = {}; this.dataset = {}; this.value = ""; this.children = [];
+    this.style = {}; this.dataset = {}; this.value = ""; this.children = []; this.parentElement = null;
     this.classList = {add() {}, remove() {}, toggle() {}};
     this.scrollHeight = this.scrollTop = this.clientHeight = 0;
   }
-  append(...children) { this.children.push(...children); }
+  append(...children) { for (const child of children) { if (child && typeof child === "object") child.parentElement = this; this.children.push(child); } }
   appendChild(child) { this.append(child); }
-  replaceChildren(...children) { this.children = children; }
+  replaceChildren(...children) { for (const child of this.children) if (child && typeof child === "object") child.parentElement = null; this.children = []; this.append(...children); }
+  after(...nodes) { if (!this.parentElement) return; const parent = this.parentElement, index = parent.children.indexOf(this); for (const node of nodes) { if (node && typeof node === "object") node.parentElement = parent; parent.children.splice(++index, 0, node); } }
+  remove() { if (!this.parentElement) return; const parent = this.parentElement; parent.children = parent.children.filter(child => child !== this); this.parentElement = null; }
   querySelectorAll() { return []; }
   addEventListener() {}
   focus() {}
@@ -24,7 +26,7 @@ let timerId = 0, focused = false;
 const requests = [];
 let saved = {uiLocale: "en", sourceLanguage: "ja", defaultTargetLanguage: "fr", preferredSubtitleLanguage: "es"};
 const document = {
-  documentElement: {}, visibilityState: "visible", hasFocus: () => focused,
+  documentElement: {}, body: new Element(), visibilityState: "visible", hasFocus: () => focused,
   getElementById(id) { assert.ok(elements.has(id), "missing DOM element: " + id); return elements.get(id); },
   querySelectorAll() { return []; }, addEventListener() {}, createElement() { return new Element(); },
   createTextNode(textContent) { return {textContent}; }

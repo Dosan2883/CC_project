@@ -44,6 +44,7 @@ class JobRequest(BaseModel):
     target: str
     sources: list[Source] = Field(min_length=1, max_length=20)
     consent: bool
+    title: str | None = Field(default=None, max_length=60)
 
 
 class SummaryRenameRequest(BaseModel):

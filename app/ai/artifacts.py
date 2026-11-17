@@ -12,8 +12,13 @@ def digest(value):
 
 
 class Artifacts:
-    def __init__(self, db, storage):
-        self.db, self.storage = db, storage
+    def __init__(self, db, storage_provider):
+        self.db = db
+        self._storage_provider = storage_provider if callable(storage_provider) else lambda: storage_provider
+
+    @property
+    def storage(self):
+        return self._storage_provider()
 
     def read(self, identity, key):
         try:

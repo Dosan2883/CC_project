@@ -249,7 +249,8 @@ class TranscriptSummaryTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             self.jobs.submit(self.body, "owner")
         self.assertEqual(error.exception.detail, "NO_TRANSCRIPT_SEGMENTS")
-        self.media.storage.put("extracted/m1/t.json", json.dumps({"pages": [], "segments": [{"start": 0, "end": 1, "text": "가" * 3600}]}).encode())
+        transcript_key = self.media.asset("m1")["transcriptKey"]
+        self.media.storage.put(transcript_key, json.dumps({"pages": [], "segments": [{"start": 0, "end": 1, "text": "가" * 40001}]}).encode())
         with self.assertRaises(HTTPException) as error:
             self.jobs.submit(self.body, "owner")
         self.assertEqual(error.exception.detail, "SELECTION_TOO_LONG")

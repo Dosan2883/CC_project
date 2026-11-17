@@ -243,7 +243,9 @@ class TranslationService:
                 raise HTTPException(409, "SOURCE_VERSION_CHANGED")
 
         if source and not text_matches_language(text, source):  # 설정한 원문 언어와 실제 글이 다르면 번역하지 않는다
-            return checked({"translated": text, "target": target, "page": page, "cached": False, "languageMismatch": True})
+            return checked({"translated": text, "target": target, "page": page, "cached": False, "sameLanguage": True, "languageMismatch": True})
+        if source == target:  # 이미 같은 언어면 호출하지 않는다
+            return checked({"translated": text, "target": target, "page": page, "cached": False, "sameLanguage": True})
         key, cached = self.cached(target, text, source, context)
         if cached:
             return checked({"translated": cached, "target": target, "page": page, "cached": True})
