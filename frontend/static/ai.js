@@ -86,45 +86,50 @@ async function runAi(sources, kind = "summarize") {
   const state = document.createElement("p"), output = document.createElement("pre");
   output.style.whiteSpace = "pre-wrap";
   const evidenceBox = document.createElement("div");
-  win.body.append(state, output, evidenceBox);  // 떠 있는 창이라 결과를 열어 둔 채 채팅을 계속 볼 수 있다
+  const finderSlot = document.createElement("div"); finderSlot.className = "finder-slot";  // 요약과 원문 근거 사이: 일정 찾기가 들어갈 자리
+  win.body.append(state, output, finderSlot, evidenceBox);  // 떠 있는 창이라 결과를 열어 둔 채 채팅을 계속 볼 수 있다
   let jobId;
   const active = () => win.open && currentRoom?.roomId === roomId && generation === viewGeneration && token === authToken;
   async function showExisting(info) {  // 이미 만들어진 요약이면 새로 만들지 않고 저장된 내용을 보여 준다
-    state.textContent = t("summaryExists");
+    state.textContent = "";  // 저장된 요약이면 안내 문구 없이 내용만 바로 보여 준다
     const full = await api(`/api/ai/rooms/${roomId}/summaries/${info.entryId}`);
     if (!active()) return;
     output.textContent = [full.title, full.result.text].join("\n\n");
     showEvidence(evidenceBox, full.result.evidence, evidenceLanguage, active);
+    if (kind !== "translate" && typeof addDeadlineFinder === "function") addDeadlineFinder(finderSlot, sources, active);
   }
   async function poll() {
     for (let i = 0; i < 180 && active(); i++) {
       const job = await api(`/api/ai/jobs/${jobId}`);
       if (!active()) return;
       state.textContent = `${job.status} · 시도 ${job.attempts}/3`;
+      setBusy(state, job.status !== "COMPLETED" && job.status !== "FAILED");
       if (job.status === "COMPLETED") {
         output.textContent = job.result.text;
         if (job.entryId) output.after(summaryNameRow(roomId, job.entryId, active));  // 요약 이름 정하기 (목록에 이 이름으로 보인다)
         showEvidence(evidenceBox, job.result.evidence, evidenceLanguage, active);
         refreshSummaries();
+        if (kind !== "translate" && typeof addDeadlineFinder === "function") addDeadlineFinder(finderSlot, sources, active);  // 요약에 쓴 자료에서 마감·일정 후보 찾기
         return;
       }
       if (job.status === "FAILED") {
         state.textContent += ` · ${job.errorCode}`;
         const retryButton = document.createElement("button"); retryButton.textContent = t("retry");
-        retryButton.onclick = async () => { retryButton.remove(); try { const again = await api(`/api/ai/jobs/${jobId}/retry`, "POST"); if (again.existing) return await showExisting(again); jobId = again.jobId; await poll(); } catch (e) { state.textContent = e.code || t("failed"); } };
+        retryButton.onclick = async () => { retryButton.remove(); setBusy(state, true); try { const again = await api(`/api/ai/jobs/${jobId}/retry`, "POST"); if (again.existing) return await showExisting(again); jobId = again.jobId; await poll(); } catch (e) { state.textContent = e.code || t("failed"); setBusy(state, false); } };
         win.body.append(retryButton); return;
       }
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    if (active()) state.textContent = "대기 시간이 지났습니다. 작업 번호: " + jobId;
+    if (active()) { state.textContent = "대기 시간이 지났습니다. 작업 번호: " + jobId; setBusy(state, false); }
   }
   try {
-    state.textContent = "선택 자료 처리 중…";
+    state.textContent = "선택 자료 처리 중…"; setBusy(state, true);
     const created = await api("/api/ai/jobs", "POST", {roomId, kind, sourceLanguage: $("srcLang").value || "auto", target: outputLanguage, sources, consent: true});
     if (created.existing) return await showExisting(created);
     jobId = created.jobId;
     await poll();
   } catch (e) { if (active()) state.textContent = t("aiErr_" + e.code) || e.code || t("failed"); }
+  finally { setBusy(state, false); }
 }
 
 

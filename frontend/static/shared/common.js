@@ -1,4 +1,5 @@
 const $ = id => document.getElementById(id);
+const setBusy = (node, on) => node?.classList?.toggle("busy", !!on);  // 처리 중이면 글자 앞에 빙글빙글 도는 표시를 붙인다
 let locale = (navigator.language || "ko").slice(0,2);
 if (!I18N[locale]) locale = "en";
 let token = null, ws, me, currentRoom, lastSeq = 0, retry = 0, reconnectTimer, roomsTimer, lastRooms = [], prevMsg = null, viewGeneration = 0;

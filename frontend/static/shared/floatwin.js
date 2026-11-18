@@ -26,7 +26,8 @@ function openFloatWindow(title, {width = 460, height = 420} = {}) {
     if (!state.open) return;
     state.open = false;
     floatWindows.delete(state);
-    win.remove();
+    win.classList?.add("closing");  // 줄어들며 사라진 뒤에 지운다
+    setTimeout(() => win.remove(), 160);
     if (state.onClose) state.onClose();
   }};
   close.onclick = () => state.close();

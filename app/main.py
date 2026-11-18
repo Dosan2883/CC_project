@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.ai.routes import router as ai_router
 from app.auth.routes import router as auth_router
+from app.calendar.routes import router as calendar_router
 from app.chat.routes import router as chat_router
 from app.core import runtime
 from app.core.config import FRONTEND_DIR, LANGUAGES, RUN_MEDIA_WORKER
@@ -52,6 +53,7 @@ app.include_router(media_router)
 app.include_router(chat_router)
 app.include_router(users_router)
 app.include_router(ai_router)
+app.include_router(calendar_router)
 
 
 @app.get("/health/live")

@@ -55,7 +55,7 @@ async function openPdfOriginal(m) {
   const authToken = token;
   const show = async page => {
     const mine = ++sequence;
-    status.textContent = "…";
+    status.textContent = "…"; setBusy(status, true);
     try {
       const response = await fetch(`/api/media/${m.mediaId}/pages/${page}/image`, {headers: {Authorization: "Bearer " + authToken}});
       if (!response.ok) throw new Error();
@@ -63,8 +63,8 @@ async function openPdfOriginal(m) {
       if (mine !== sequence || !win.open) return;
       if (url) URL.revokeObjectURL(url);
       image.src = url = URL.createObjectURL(blob);
-      status.textContent = "";
-    } catch { if (mine === sequence) status.textContent = t("pdfImageFail"); }
+      status.textContent = ""; setBusy(status, false);
+    } catch { if (mine === sequence) { status.textContent = t("pdfImageFail"); setBusy(status, false); } }
   };
   const nav = pageNav(total, show);
   win.body.append(nav.node, status, image);
@@ -83,6 +83,8 @@ async function openPdfTranslateAll(m) {
   const status = el("small", "pdf-status"), list = el("div", "pdf-results");
   win.body.append(status, list);
   const alive = () => win.open && viewGeneration === generation && token === authToken && epoch === itemEpoch(`file:${m.mediaId}`);
+  setBusy(status, true);
+  try {
   for (let index = 0; index < pages.length && alive(); index++) {
     status.textContent = `${t("translating")} ${index + 1} / ${pages.length}`;
     const block = el("div", "pdf-block"); block.append(el("h4", null, `${t("pageN")} ${index + 1}`));
@@ -99,6 +101,7 @@ async function openPdfTranslateAll(m) {
     }
   }
   if (alive()) status.textContent = `${t("translated")} · ${LANG_NAMES[target]} · ${pages.length}${t("pdfPageUnit")}`;
+  } finally { setBusy(status, false); }
 }
 
 /* 전체 요약: 모든 쪽을 하나의 요약으로 만든다. 서버가 한 번에 받는 양(20쪽, 3500자)을 넘으면 미리 알려 준다. */

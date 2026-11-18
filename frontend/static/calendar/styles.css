@@ -1,0 +1,41 @@
+  /* ---------- 방 캘린더 ---------- */
+  .cal-nav { display:flex; align-items:center; gap:6px; }
+  .cal-nav strong { flex:1; text-align:center; }
+  .cal-nav button { padding:3px 10px; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px; }
+  .cal-dow { text-align:center; font-size:11px; color:var(--muted); padding:2px 0; }
+  .cal-cell { display:flex; flex-direction:column; align-items:center; gap:3px; padding:5px 0 4px; border:1px solid transparent; border-radius:10px; background:transparent; font-size:13px; line-height:1.2; }
+  .cal-cell:hover { background:var(--bubble); }
+  .cal-cell.other { color:var(--muted); opacity:.55; }
+  .cal-cell.today { border-color:var(--accent); }
+  .cal-cell.selected { background:var(--accent-soft); font-weight:700; }
+  .cal-dots { display:flex; gap:2px; min-height:5px; }
+  .cal-dots i { width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  .cal-day { display:grid; gap:6px; }
+  .cal-day-title { font-size:13px; font-weight:600; }
+  .cal-empty { color:var(--muted); font-size:13px; padding:4px 2px; }
+  .cal-event { display:grid; gap:3px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:var(--bubble); }
+  .cal-event-head { display:flex; align-items:baseline; gap:8px; }
+  .cal-event-head strong { min-width:0; overflow-wrap:anywhere; }
+  .cal-time { flex:none; font-size:12px; color:var(--accent); }
+  .cal-note { font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .cal-event small { color:var(--muted); }
+  .cal-act { display:flex; gap:6px; }
+  .cal-act button { font-size:12px; padding:2px 10px; border-radius:999px; }
+  .cal-form { display:grid; gap:6px; padding-top:10px; border-top:1px solid var(--line); }
+  .cal-row { display:flex; gap:6px; }
+  .cal-row input { flex:1; }
+  .cal-form textarea { width:100%; min-width:0; font:inherit; font-size:14px; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; resize:vertical; }
+  .cal-form textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+  .cal-row button { flex:none; }
+
+  /* ---------- 요약 창의 일정 찾기 ---------- */
+  .finder-slot:empty { display:none; }
+  .cal-find { display:grid; gap:8px; padding-top:8px; border-top:1px solid var(--line); }
+  .cal-find > button { justify-self:start; }
+  .cal-found { display:grid; gap:8px; }
+  .cal-found-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .cal-found-head button { font-size:12px; padding:3px 12px; border-radius:999px; }
+  .cal-card { display:grid; gap:6px; padding:10px; border:1px solid var(--line); border-radius:12px; background:var(--bubble); }
+  .cal-card.done { opacity:.7; }
+  .cal-source { color:var(--muted); overflow-wrap:anywhere; }

@@ -16,7 +16,7 @@ function pageTranslateButton(mediaId, page, pre) {
       rememberTranslateConsent();
     }
     const roomId = currentRoom?.roomId, target = targetLang, epoch = itemEpoch(`file:${mediaId}`), generation = viewGeneration, authToken = token;
-    button.disabled = true; button.textContent = t("translating");
+    button.disabled = true; button.textContent = t("translating"); setBusy(button, true);
     try {
       const result = await api("/api/ai/translate-page", "POST", { mediaId, page, target });
       if (currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken || epoch !== itemEpoch(`file:${mediaId}`)) return;  // 이전 방·계정의 응답은 폐기
@@ -27,7 +27,7 @@ function pageTranslateButton(mediaId, page, pre) {
     } catch (error) {
       toast(t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail"));
     } finally {
-      button.disabled = false;
+      button.disabled = false; setBusy(button, false);
       if (!button.nextElementSibling?.classList?.contains("translation")) button.textContent = t("translate");
     }
   };
@@ -82,7 +82,7 @@ function audioInline(mediaId, ext) {
   }
   async function load() {
     const request = ++generation; clearTracks(); loaded = false;
-    status.textContent = "자막 준비 중…";
+    status.textContent = "자막 준비 중…"; setBusy(status, true);
     try {
       const transcript = await api(`/api/media/${mediaId}/transcript`);
       if (!active() || generation !== request) return;
@@ -105,6 +105,7 @@ function audioInline(mediaId, ext) {
       player.append(track); loaded = true;
       status.textContent = `자막 · ${track.label} · v${transcript.version || 1}`;
     } catch (error) { if (active() && generation === request) status.textContent = error.message || t("failed"); }
+    finally { if (generation === request) setBusy(status, false); }
   }
   language.onchange = () => { load(); };
   player.onplay = () => {
@@ -187,6 +188,7 @@ function fileCard(m, sender) {
     }
     st.textContent = t("st" + s.status); st.dataset.s = s.status;
     const busy = s.status === "PENDING" || s.status === "PROCESSING";
+    setBusy(st, busy);
     if (busy) loaded = false;
     bar.style.display = busy ? "" : "none"; fill.style.width = s.progress + "%";
     msg.className = "file-msg"; msg.textContent = "";

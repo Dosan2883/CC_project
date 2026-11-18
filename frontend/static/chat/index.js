@@ -158,6 +158,7 @@ function connect() {
     if (d.type === "message:updated") { messageViews.get(d.messageSeq)?.(d); refreshSummaries(); }
     else if (d.type === "source:updated") { document.dispatchEvent(new CustomEvent("source:updated", {detail:d})); refreshSummaries(); }
     else if (d.type === "ai:updated") refreshSummaries();
+    else if (d.type === "calendar:changed") { if (typeof refreshCalendar === "function") refreshCalendar(); }  // 다른 사람이 일정을 바꿨다
     else if (d.type === "message:new") { if (d.messageSeq > lastSeq) { lastSeq = d.messageSeq; addMessage(d); markVisibleRead(); } }
     else if (d.type === "message:ack") acknowledgeMessage(d.clientMessageId);
     else if (d.type === "media:update" || d.type === "media:ready") { if (cards[d.mediaId]) cards[d.mediaId](d); }
@@ -253,7 +254,7 @@ async function translateMessage(m, bubble, button) {
     rememberTranslateConsent();
   }
   const roomId = currentRoom.roomId, target = targetLang, revision = m.revision || 1, generation = viewGeneration, authToken = token;
-  button.disabled = true; button.textContent = t("translating");
+  button.disabled = true; button.textContent = t("translating"); setBusy(button, true);
   try {
     const result = await api("/api/ai/translate", "POST", { roomId, messageSeq: m.messageSeq, target });
     if (currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;  // 이전 방·계정의 응답은 폐기
@@ -268,7 +269,7 @@ async function translateMessage(m, bubble, button) {
     button.textContent = t("translate");
     toast(t(error.code === "TEXT_TOO_LONG" ? "translateLong" : translateErrors[error.status] || "translateFail"));
   } finally {
-    button.disabled = false;
+    button.disabled = false; setBusy(button, false);
   }
 }
 

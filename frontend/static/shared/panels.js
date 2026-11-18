@@ -14,7 +14,8 @@ function applyPanels() {
   $("sideOpen").hidden = !sideCollapsed;
   $("sideFold").title = t("sideFold");
   $("sideOpen").title = t("sideOpen");
-  $("docPanel").hidden = !open;
+  $("docPanel").hidden = false;  // 숨김 속성은 쓰지 않는다. 닫힌 패널은 CSS로 서서히 사라지고, 아래 inert로 누르기·탭 이동을 막는다
+  $("docPanel").inert = !open;  // 닫혀도 화면에는 남아 있어서 부드럽게 사라진다. 닫힌 동안에는 누르거나 탭으로 갈 수 없다
   $("docTitle").textContent = t("summaryList");
   $("roomSummary").ariaExpanded = String(open);
   refreshSelectionBar();
