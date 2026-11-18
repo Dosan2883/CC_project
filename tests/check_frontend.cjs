@@ -14,7 +14,7 @@ class Element {
   append(...children) { for (const child of children) { if (child && typeof child === "object") child.parentElement = this; this.children.push(child); } }
   appendChild(child) { this.append(child); }
   replaceChildren(...children) { for (const child of this.children) if (child && typeof child === "object") child.parentElement = null; this.children = []; this.append(...children); }
-  after(...nodes) { if (!this.parentElement) return; const parent = this.parentElement, index = parent.children.indexOf(this); for (const node of nodes) { if (node && typeof node === "object") node.parentElement = parent; parent.children.splice(++index, 0, node); } }
+  after(...nodes) { if (!this.parentElement) return; const parent = this.parentElement; let index = parent.children.indexOf(this); for (const node of nodes) { if (node && typeof node === "object") node.parentElement = parent; parent.children.splice(++index, 0, node); } }
   remove() { if (!this.parentElement) return; const parent = this.parentElement; parent.children = parent.children.filter(child => child !== this); this.parentElement = null; }
   querySelectorAll() { return []; }
   addEventListener() {}

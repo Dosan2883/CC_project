@@ -39,7 +39,7 @@ const response=value=>({ok:true,status:200,json:async()=>value,blob:async()=>({}
   assert.ok(calls.some(c=>c.url==='/api/ai/jobs'&&c.method==='POST'));
   assert.equal(calls.filter(c=>c.url==='/api/ai/translate').length,0,'completed summary evidence remains untranslated until requested');
   const float=context.document.body.children.find(node=>node.className==='float-win');
-  const evidenceBox=float.children[1].children[2], translateButton=evidenceBox.children[1].children[1];
+  const evidenceBox=float.children[1].children.at(-1), translateButton=evidenceBox.children[1].children[1];
   await translateButton.onclick();
   assert.equal(calls.filter(c=>c.url==='/api/ai/translate').length,1,'only the explicit evidence action calls translation');
 

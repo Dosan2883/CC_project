@@ -395,12 +395,15 @@ class AIJobs:
             if time.monotonic() >= deadline:
                 raise HTTPException(503, "RESULT_IN_PROGRESS")
             time.sleep(.05)
-        result = {"translated":job["result"]["text"], "target":target, "cached":cached or bool(job.get("cached")) or job["result"].get("flags", {}).get("cached", False)}
+        flags = job["result"].get("flags", {})
+        result = {"translated":job["result"]["text"], "target":target, "cached":cached or bool(job.get("cached")) or flags.get("cached", False)}
         if source["kind"] == "message":
-            result["sameLanguage"] = job["result"].get("flags", {}).get("sameLanguage", False)
+            result["sameLanguage"] = flags.get("sameLanguage", False)
         else:
             result["page"] = source["page"]
-            result["sameLanguage"] = job["result"].get("flags", {}).get("sameLanguage", False)
+            result["sameLanguage"] = flags.get("sameLanguage", False)
+        if flags.get("languageMismatch"):
+            result["languageMismatch"] = True
         return result
 
     def summary_cache_key(self, job):

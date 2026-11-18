@@ -146,6 +146,7 @@ class ExtractAndUploadTests(unittest.TestCase):
             token = upload["uploadUrl"].split("token=")[1]
             asset = media.receive_upload(upload["mediaId"], token, data)
             self.assertEqual((asset["type"], asset["status"]), ("audio", "UPLOADED"))
+            media.start_job(upload["mediaId"])
             self.assertTrue(media.work(upload["mediaId"]))
             self.assertEqual(media.status(upload["mediaId"])["status"], "COMPLETED")
             transcript = media.transcript(upload["mediaId"])
