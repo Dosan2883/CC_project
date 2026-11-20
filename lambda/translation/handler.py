@@ -16,6 +16,29 @@ MAX_TOKENS = 4000
 MAX_INPUT_CHARS = 4000
 DEFAULT_MODEL_ID = "amazon.nova-micro-v1:0"
 
+DEADLINE_INSTRUCTION = """You extract deadlines and scheduled events from numbered chat messages.
+Each line looks like: [n] (message date YYYY-MM-DD) text
+Return ONLY a JSON array. No prose and no code fence. Each item has this shape:
+{"source": n, "title": "short title in the message's own language, at most 60 characters", "when": SPEC, "time": "HH:MM" or ""}
+SPEC is exactly one of these (do NOT compute the calendar date yourself, only describe the expression):
+{"type":"date","month":M,"day":D,"year":Y or null}                      for "11월 27일", "Nov 30", "12月5日"
+{"type":"relative_day","offset":N}                                       today=0, tomorrow=1, day after tomorrow=2, yesterday=-1
+{"type":"in","unit":"day"|"week"|"month","n":N}                          for "3일 후", "in two weeks", "2週間後"
+{"type":"weekday","weekday":W,"week":"this"|"next"|"upcoming"}           W: Monday=0 ... Sunday=6.
+    "this" = a day in the week of the message date, "next" = the following week, "upcoming" = no week word (the next such weekday)
+{"type":"month_end","month_offset":0|1}                                  "이번 달 말", "end of next month"
+Time is 24-hour HH:MM and only when the message states a clock time, otherwise "".
+Include only explicit deadlines, due dates or scheduled events that contain a date expression. Never guess. If there is none, return [].
+Examples:
+[1] (2026-11-18) 다음 주 금요일 오후 3시까지 발표 자료 제출해 주세요
+[{"source":1,"title":"발표 자료 제출","when":{"type":"weekday","weekday":4,"week":"next"},"time":"15:00"}]
+[2] (2026-11-18) Please send the report by Nov 30
+[{"source":2,"title":"Send the report","when":{"type":"date","month":11,"day":30,"year":null},"time":""}]
+[3] (2026-11-18) 来週の月曜日に会議があります
+[{"source":3,"title":"会議","when":{"type":"weekday","weekday":0,"week":"next"},"time":""}]
+[4] (2026-11-18) 안녕하세요, 잘 지내세요?
+[]"""
+
 _secret = None
 _ssm = None
 _bedrock = None
@@ -73,15 +96,16 @@ def _translate(text, target, action="translate"):
     if _bedrock is None:
         _bedrock = boto3.client("bedrock-runtime")
 
-    instruction = ("Summarize only the selected evidence in the target language. Include decisions and action items only if explicitly present. Cite evidence using [1], [2], etc. Do not invent facts. Return only the summary with citations."
+    instruction = (DEADLINE_INSTRUCTION if action == "deadlines" else "Summarize only the selected evidence in the target language. Include decisions and action items only if explicitly present. Cite evidence using [1], [2], etc. Do not invent facts. Return only the summary with citations."
                    if action == "summarize" else
                    "Translate the user's text into the requested target language. Preserve meaning, tone, names, numbers and paragraph breaks. Return only the translated text without explanation.")
+    user_text = f"Messages:\n{text}" if action == "deadlines" else f"Target language: {target}\n\nText:\n{text}"
     response = _bedrock.converse(
         modelId=os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID),
         system=[{"text": instruction}],
         messages=[{
             "role": "user",
-            "content": [{"text": f"Target language: {target}\n\nText:\n{text}"}],
+            "content": [{"text": user_text}],
         }],
         inferenceConfig={"maxTokens": MAX_TOKENS, "temperature": 0.1},
     )
@@ -132,7 +156,7 @@ def handler(event, context):
             raw_body = base64.b64decode(raw_body).decode("utf-8")
         payload = json.loads(raw_body) if isinstance(raw_body, str) else raw_body
         action = payload.get("action", "translate")
-        if action not in ("translate", "summarize"):
+        if action not in ("translate", "summarize", "deadlines"):
             raise ValueError("invalid action")
     except (ValueError, json.JSONDecodeError, UnicodeDecodeError, base64.binascii.Error):
         return _json_response(400, {"error": "invalid request"})

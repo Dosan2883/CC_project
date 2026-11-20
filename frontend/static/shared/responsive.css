@@ -3,9 +3,13 @@
     #app { grid-template-columns:minmax(0,1fr); }
     #app > aside, #app > main { grid-column:1; }
     #app.doc-open { --doc-w:0px; }
-    #app.side-collapsed:not(.in-room) > aside { display:flex; }
+    #app.side-collapsed:not(.in-room) > aside { display:flex; opacity:1; visibility:visible; pointer-events:auto; }
     #sideFold, .side-open { display:none; }
     #app.side-collapsed .chat-head { padding-left:12px; }
+    #docPanel .doc-main { min-width:0; }
+    #app:not(.doc-open) #docPanel { transform:translateY(100%); transition:transform .3s ease, opacity .2s ease, visibility 0s linear .3s; }  /* 아래로 내려가며 닫힌다 */
+    #app.doc-open #docPanel { transform:none; transition:transform .3s ease, opacity .2s ease, visibility 0s linear 0s; }
+    @media (prefers-reduced-motion: reduce) { #app:not(.doc-open) #docPanel, #app.doc-open #docPanel { transition:none !important; } }
     #docPanel { position:fixed; inset:auto 0 0 0; height:52dvh; z-index:20; grid-column:auto; border-left:0; border-top:1px solid var(--line); box-shadow:0 -8px 24px rgba(20,30,60,.12); }  /* 아래에서 올라오는 시트: 위쪽 채팅이 보여야 메시지를 고를 수 있다 */
     #app:not(.in-room) main { display:none; }
     #app.in-room aside { display:none; }

@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/static/rooms/styles.css">
 <link rel="stylesheet" href="/static/chat/styles.css">
 <link rel="stylesheet" href="/static/media/styles.css">
+<link rel="stylesheet" href="/static/calendar/styles.css">
 <link rel="stylesheet" href="/static/shared/feedback.css">
 <link rel="stylesheet" href="/static/shared/responsive.css">
 </head>
@@ -92,6 +93,7 @@
         </div>
         <span id="status"></span>
         <button type="button" id="roomSummary" class="ghost" data-i="roomSummary" aria-expanded="false"></button>
+        <button type="button" id="calendarBtn" class="ghost" data-i="calendar"></button>
         <details id="roomMenu" class="room-menu">
           <summary id="roomMenuButton" class="ghost">⚙</summary>
           <div class="room-menu-list">
@@ -122,7 +124,7 @@
     </section>
   </main>
 
-  <div id="docPanel" hidden>
+  <div id="docPanel" inert>
     <div class="doc-main">
       <div class="doc-head"><strong id="docTitle"></strong><button type="button" id="docFold" class="ghost fold-btn">✕</button></div>
       <div id="sumSelectBar" class="sel-bar">
@@ -146,6 +148,7 @@
 <script defer src="/static/shared/panels.js"></script>
 <script defer src="/static/shared/floatwin.js"></script>
 <script defer src="/static/chat/participants.js"></script>
+<script defer src="/static/calendar/index.js"></script>
 <script defer src="/static/media/index.js"></script>
 <script defer src="/static/media/pdf.js"></script>
 <script defer src="/static/ai.js"></script>
