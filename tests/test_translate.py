@@ -86,6 +86,7 @@ class ApiTestBase(unittest.TestCase):
 
     def room_with_message(self, name, text, source="ko", members=("owner",)):
         token = self.signup(name + "own")
+        self.assertEqual(self.request("/api/users/me/ai-consent", "PATCH", {"allowed": True}, token)[0], 200)
         status, room = self.request("/api/rooms", "POST", {"name": name, "visibility": "public"}, token)
         self.assertEqual(status, 200)
         user = name + "own"

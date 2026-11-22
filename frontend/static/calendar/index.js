@@ -17,7 +17,7 @@ function calButton(label, className, handler) {
   button.type = "button"; button.onclick = handler;
   return button;
 }
-const calErrorText = error => t("calErr_" + error.code) || t("failed");
+const calErrorText = error => t("calErr_" + error.code) || aiErrorText(error.code) || t("failed");
 
 function toggleCalendar() {
   if (calendarWin?.open) { calendarWin.close(); return; }
@@ -189,10 +189,7 @@ function addDeadlineFinder(container, sources, active) {
   let running = false;
   const button = calButton(t("calFind"), "ghost", async () => {
     if (running) return;
-    if (!hasTranslateConsent()) {  // 글이 외부 AI 서비스로 나간다는 안내는 번역·요약과 같다
-      if (!confirm(t("translateConsent"))) return;
-      rememberTranslateConsent();
-    }
+    if (!await ensureAiConsent() || !active() || running) return;
     running = true; button.disabled = true; button.textContent = t("calFinding"); setBusy(button, true);
     results.replaceChildren();
     try {

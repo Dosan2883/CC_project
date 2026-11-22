@@ -22,6 +22,8 @@ RUN_MEDIA_WORKER = os.getenv("RUN_MEDIA_WORKER", "1" if BACKEND == "sqlite" or S
 TRANSLATE_URL = os.getenv("TRANSLATE_URL", "")
 TRANSLATE_SECRET = os.getenv("TRANSLATE_SECRET", "")
 TRANSLATE_HOURLY_LIMIT = int(os.getenv("TRANSLATE_HOURLY_LIMIT", "60"))
+AI_DAILY_CALL_LIMIT = int(os.getenv("AI_DAILY_CALL_LIMIT", "500"))
+AI_ALLOW_PRIVATE_ROOMS = os.getenv("AI_ALLOW_PRIVATE_ROOMS", "0") == "1"
 
 
 def aws_client(service):

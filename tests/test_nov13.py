@@ -132,6 +132,22 @@ class StoredResultChecks(unittest.TestCase):
         self.jobs.submit(body, "owner")
         self.assertEqual(len(calls), before)
 
+    def test_document_translation_reuses_page_chunks_without_charging_job_quota(self):
+        body = self.page(["first " * 600])
+        calls = []
+        def translate(text, target, source=None):
+            calls.append(text)
+            return "번역 " + text
+        self.model.translate = translate
+
+        page = self.jobs.sync_translation({"kind":"page", "mediaId":"f", "page":1}, "r", "ko", "owner")
+        self.assertEqual(len(calls), 2)
+        job = self.complete({**body, "kind":"translate", "sourceLanguage":"auto"})
+        self.assertEqual(job["result"]["text"], page["translated"])
+        self.assertTrue(job["result"]["flags"]["cached"])
+        self.assertEqual(len(calls), 2)
+        self.assertIsNone(self.db.get("AI_QUOTA", "owner#ko"))
+
     def test_signup_language_and_existing_preferences(self):
         auth = AuthService(AccountRepository(self.db), TokenSigner("test-signing-secret-long-enough-12345"), PersistentThrottle(self.db, "signup"))
         auth.signup("japanese", "secret123", "ja")

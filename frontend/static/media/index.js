@@ -5,17 +5,14 @@ function clearFilePolling() { for (const timer of filePollers.values()) clearTim
 const fmtSize = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
-/* 문서 페이지 번역: 서버가 저장된 추출 글자를 직접 읽어 번역한다. 동의 확인 함수는 chat/index.js의 것을 쓴다. */
+/* 문서 페이지 번역: 서버가 저장된 추출 글자를 직접 읽어 번역한다. */
 function pageTranslateButton(mediaId, page, pre) {
   const button = el("button", "page-translate", t("translate")); button.type = "button";
   button.onclick = async () => {
     const shown = pre.parentElement.querySelector(`.translation[data-page="${page}"]`);
     if (shown) { shown.remove(); button.textContent = t("translate"); return; }  // 다시 누르면 번역을 숨긴다
-    if (!hasTranslateConsent()) {
-      if (!confirm(t("translateConsent"))) return;
-      rememberTranslateConsent();
-    }
     const roomId = currentRoom?.roomId, target = targetLang, epoch = itemEpoch(`file:${mediaId}`), generation = viewGeneration, authToken = token;
+    if (!await ensureAiConsent() || currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;
     button.disabled = true; button.textContent = t("translating"); setBusy(button, true);
     try {
       const result = await api("/api/ai/translate-page", "POST", { mediaId, page, target });
@@ -25,7 +22,7 @@ function pageTranslateButton(mediaId, page, pre) {
       button.after(box);
       button.textContent = t("translateHide");
     } catch (error) {
-      toast(t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail"));
+      toast(aiErrorText(error.code) || t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail"));
     } finally {
       button.disabled = false; setBusy(button, false);
       if (!button.nextElementSibling?.classList?.contains("translation")) button.textContent = t("translate");
@@ -89,9 +86,10 @@ function audioInline(mediaId, ext) {
       segments = transcript.segments || [];
       const target = language.value;
       if (target === "off") { loaded = true; status.textContent = ""; return; }
-      if (target !== "original" && !hasTranslateConsent()) {
-        if (!confirm(t("translateConsent"))) { language.value = "original"; return load(); }
-        rememberTranslateConsent();
+      if (target !== "original") {
+        const allowed = await ensureAiConsent();
+        if (!active() || generation !== request) return;
+        if (!allowed) { language.value = "original"; return load(); }
       }
       const response = await fetch(`/api/media/${mediaId}/subtitles?target=${encodeURIComponent(target)}&consent=${target !== "original"}`, {headers:{Authorization:"Bearer " + session}});
       if (!response.ok) throw new Error((await response.json()).detail || "자막 생성 실패");
@@ -104,7 +102,7 @@ function audioInline(mediaId, ext) {
       track.onload = () => { track.track.mode = video ? "showing" : "hidden"; };
       player.append(track); loaded = true;
       status.textContent = `자막 · ${track.label} · v${transcript.version || 1}`;
-    } catch (error) { if (active() && generation === request) status.textContent = error.message || t("failed"); }
+    } catch (error) { if (active() && generation === request) status.textContent = aiErrorText(error.message) || error.message || t("failed"); }
     finally { if (generation === request) setBusy(status, false); }
   }
   language.onchange = () => { load(); };

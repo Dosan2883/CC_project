@@ -32,6 +32,34 @@ Parameters:
     Type: String
     Description: Existing SSM SecureString containing the full dotenv configuration with RUN_MEDIA_WORKER=0.
     AllowedPattern: '/[A-Za-z0-9/_.-]+'
+  EnableMonitoring:
+    Type: String
+    Default: '0'
+    AllowedValues: ['0', '1']
+  MetricsNamespace:
+    Type: String
+    Default: Messenger
+    AllowedPattern: '[A-Za-z][A-Za-z0-9_-]{0,63}'
+  AIDailyCallLimit:
+    Type: Number
+    Default: 500
+    MinValue: 0
+  AIAllowPrivateRooms:
+    Type: String
+    Default: '0'
+    AllowedValues: ['0', '1']
+  MediaDLQName:
+    Type: String
+    Default: ''
+    AllowedPattern: '[A-Za-z0-9_.-]*'
+  AIDLQName:
+    Type: String
+    Default: ''
+    AllowedPattern: '[A-Za-z0-9_.-]*'
+Conditions:
+  MonitoringEnabled: !Equals [!Ref EnableMonitoring, '1']
+  HasMediaDLQ: !Not [!Equals [!Ref MediaDLQName, '']]
+  HasAIDLQ: !Not [!Equals [!Ref AIDLQName, '']]
 Resources:
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -111,6 +139,7 @@ Resources:
             /opt/messenger/.venv/bin/pip install -r /opt/messenger/requirements.txt
             umask 077
             aws ssm get-parameter --name '${EnvironmentParameterName}' --with-decryption --query Parameter.Value --output text --region ${AWS::Region} > /etc/messenger.env
+            printf '%s\n' '' 'CLOUDWATCH_METRICS=${EnableMonitoring}' 'CLOUDWATCH_NAMESPACE=${MetricsNamespace}' 'AI_DAILY_CALL_LIMIT=${AIDailyCallLimit}' 'AI_ALLOW_PRIVATE_ROOMS=${AIAllowPrivateRooms}' >> /etc/messenger.env
             chown messenger:messenger /var/lib/messenger
             TOKEN=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
             MODE=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/tags/instance/ServiceMode)
@@ -179,6 +208,58 @@ Resources:
       LaunchTemplate: {LaunchTemplateId: !Ref LaunchTemplate, Version: !GetAtt LaunchTemplate.LatestVersionNumber}
       HealthCheckType: EC2
       Tags: [{Key: ServiceMode, Value: worker, PropagateAtLaunch: true}]
+  OperationsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: MonitoringEnabled
+    Properties:
+      DashboardName: !Sub '${AWS::StackName}-messenger'
+      DashboardBody:
+        Fn::Sub:
+          - |
+            {"widgets":[
+              {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"Healthy chat hosts and WebSocket connections","region":"${AWS::Region}","period":60,"metrics":[
+                ["AWS/ApplicationELB","HealthyHostCount","TargetGroup","${TargetGroup.TargetGroupFullName}","LoadBalancer","${LoadBalancer.LoadBalancerFullName}",{"stat":"Minimum"}],
+                ["${MetricsNamespace}","WebSocketConnections",{"stat":"Sum","yAxis":"right"}]]}},
+              {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"Message delivery P95 (ms)","region":"${AWS::Region}","period":60,"stat":"p95","metrics":[
+                ["${MetricsNamespace}","MessageDeliveryMs"]]}},
+              {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"CPU and memory (%)","region":"${AWS::Region}","period":300,"stat":"Average","metrics":[
+                ["AWS/EC2","CPUUtilization","AutoScalingGroupName","${ChatAutoScalingGroup}"],
+                ["AWS/EC2","CPUUtilization","AutoScalingGroupName","${WorkerAutoScalingGroup}"],
+                ["${MetricsNamespace}","MemoryUsedPercent","Role","Web"],["${MetricsNamespace}","MemoryUsedPercent","Role","Worker"]]}},
+              {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"Pending work and dead letters","region":"${AWS::Region}","period":60,"metrics":[
+                ["${MetricsNamespace}","PendingJobs","Queue","Media",{"stat":"Maximum"}],
+                ["${MetricsNamespace}","PendingJobs","Queue","AI",{"stat":"Maximum"}],
+                ["${MetricsNamespace}","JobDeadLetters","Queue","Media",{"stat":"Sum"}],
+                ["${MetricsNamespace}","JobDeadLetters","Queue","AI",{"stat":"Sum"}]${MediaDLQMetric}${AIDLQMetric}]}},
+              {"type":"metric","x":0,"y":12,"width":12,"height":6,"properties":{"title":"OCR and STT P95 by language (ms)","region":"${AWS::Region}","period":300,"metrics":[
+                [{"expression":"SEARCH('{\"${MetricsNamespace}\",Kind,Language} MetricName=\"ExtractionMs\"', 'p95')","id":"e1"}]]}},
+              {"type":"metric","x":12,"y":12,"width":12,"height":6,"properties":{"title":"AI failures and rate limiting (%)","region":"${AWS::Region}","period":300,"stat":"Sum","metrics":[
+                ["${MetricsNamespace}","AIUpstreamCalls",{"id":"calls","visible":false}],
+                ["${MetricsNamespace}","AIUpstreamFailures",{"id":"fail","visible":false}],
+                ["${MetricsNamespace}","AIUpstreamRateLimited",{"id":"throttle","visible":false}],
+                ["${MetricsNamespace}","AIHTTPRequests",{"id":"req","visible":false}],
+                ["${MetricsNamespace}","AIHTTPFailures",{"id":"httpfail","visible":false}],
+                ["${MetricsNamespace}","AIHTTPRateLimited",{"id":"local429","visible":false}],
+                [{"expression":"IF(calls>0,100*fail/calls,0)","label":"Upstream failures","id":"e1"}],
+                [{"expression":"IF(calls>0,100*throttle/calls,0)","label":"Upstream 429","id":"e2"}],
+                [{"expression":"IF(req>0,100*local429/req,0)","label":"HTTP 429","id":"e3"}],
+                [{"expression":"IF(req>0,100*httpfail/req,0)","label":"HTTP failures","id":"e4"}]]}},
+              {"type":"metric","x":0,"y":18,"width":12,"height":6,"properties":{"title":"Retry success per attempt (%)","region":"${AWS::Region}","period":300,"stat":"Sum","metrics":[
+                ["${MetricsNamespace}","RetryAttempts","Queue","Media",{"id":"ma","visible":false}],
+                ["${MetricsNamespace}","RetrySuccesses","Queue","Media",{"id":"ms","visible":false}],
+                ["${MetricsNamespace}","RetryAttempts","Queue","AI",{"id":"aa","visible":false}],
+                ["${MetricsNamespace}","RetrySuccesses","Queue","AI",{"id":"ais","visible":false}],
+                [{"expression":"IF(ma>0,100*ms/ma,0)","label":"Media","id":"e1"}],
+                [{"expression":"IF(aa>0,100*ais/aa,0)","label":"AI","id":"e2"}]]}}
+            ]}
+          - MediaDLQMetric: !If
+              - HasMediaDLQ
+              - !Sub ',["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","${MediaDLQName}",{"stat":"Maximum"}]'
+              - ''
+            AIDLQMetric: !If
+              - HasAIDLQ
+              - !Sub ',["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","${AIDLQName}",{"stat":"Maximum"}]'
+              - ''
 Outputs:
   LoadBalancerDNS:
     Value: !GetAtt LoadBalancer.DNSName

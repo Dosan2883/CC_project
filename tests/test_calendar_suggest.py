@@ -116,6 +116,9 @@ class FakeJobs:
 
 
 class FakeQuota:
+    def authorize_external(self, user, room):
+        pass
+
     def __init__(self, error=None):
         self.error, self.reserved, self.attempted = error, 0, 0
 

@@ -9,10 +9,11 @@ import threading
 
 from fastapi import HTTPException
 from app.core.database import Change, Conflict
+from app.core import metrics
 from app.media.queue import MediaWorker
 from app.media.service import MediaError
 from app.ai.contract import MODEL_VERSION
-from app.ai.service import LANGUAGE_NAMES, split_text, text_matches_language
+from app.ai.service import LANGUAGE_NAMES, MAX_CHARS, MAX_PAGE_CHARS, split_text, text_matches_language
 from app.ai.artifacts import Artifacts, digest
 
 SUMMARY_CACHE_VERSION = "2"  # 요약 프롬프트나 방식을 크게 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
@@ -51,7 +52,7 @@ class AIJobs:
         for source in sources:
             if source["kind"] == "document":
                 try:
-                    asset = self.media.asset(source["mediaId"])
+                    asset = self.media.live_asset(source["mediaId"])
                 except MediaError as error:
                     raise HTTPException(error.status, error.code)
                 if asset["roomId"] != room:
@@ -76,7 +77,7 @@ class AIJobs:
                         "version":record.version, "sourceLanguage":record.value.get("sourceLanguage", "und")}
             else:
                 try:
-                    asset = self.media.asset(source["mediaId"])
+                    asset = self.media.live_asset(source["mediaId"])
                 except MediaError:
                     raise HTTPException(404, "MEDIA_NOT_FOUND")
                 if asset["roomId"] != room:
@@ -133,7 +134,7 @@ class AIJobs:
         for source in body["sources"]:
             if source["kind"] != "message":
                 try:
-                    asset = self.media.asset(source["mediaId"])
+                    asset = self.media.live_asset(source["mediaId"])
                 except MediaError as error:
                     raise HTTPException(error.status, error.code)
                 self.rooms.require_member(body["roomId"], user)
@@ -146,7 +147,7 @@ class AIJobs:
             evidence = self.select(body["roomId"], body["sources"], user)
         except MediaError as error:
             raise HTTPException(error.status, error.code)
-        if sum(len(split_text(e["text"], 2800)) for e in evidence) > 16:
+        if sum(len(self.piece_texts(body["kind"], e)) for e in evidence) > 16:
             raise HTTPException(422, "TOO_MANY_CHUNKS")
         identity = {"roomId":body["roomId"], "kind":body["kind"], "sourceLanguage":body["sourceLanguage"], "target":body["target"],
                     "scope": body["sources"], "evidence":[digest(e) for e in evidence],
@@ -192,7 +193,10 @@ class AIJobs:
             return self.get(job_id, user)
         if saved is not None:
             self.index(job)
-            return self.get(job_id, user)
+            result = self.get(job_id, user)
+            if body["kind"] != "translate":
+                result["existing"] = True
+            return result
         try:
             self.queue.send(job_id)
         except Exception:
@@ -271,6 +275,7 @@ class AIJobs:
             value = dict(record.value)
             if value.get("jobId") in hidden:
                 continue
+            value["updatedAt"] = value.get("updatedAt") or value.get("createdAt")
             try:
                 value["stale"] = not self.source_versions_match(room, value, user)
             except HTTPException as error:
@@ -315,8 +320,7 @@ class AIJobs:
                 if version is None:
                     # Legacy assets do not store extractionVersion; load their evidence once for a correct comparison.
                     current = self.select(room, result["sources"], user)
-                    current = [{"source":entry["source"], "version":entry.get("version", 1)} for entry in current]
-                    return self._version_signature(saved) == self._version_signature(current)
+                    return self.digest(current) == result.get("sourceHash")
             current.append({"source":source, "version":version})
         return self._version_signature(saved) == self._version_signature(current)
 
@@ -374,7 +378,6 @@ class AIJobs:
             if source["kind"] == "page" and error.detail == "EMPTY_SELECTION":
                 raise HTTPException(422, "EMPTY_PAGE")
             raise
-        from app.ai.service import MAX_CHARS, MAX_PAGE_CHARS
         if len(evidence[0]["text"]) > (MAX_CHARS if source["kind"] == "message" else MAX_PAGE_CHARS):
             raise HTTPException(422, "TEXT_TOO_LONG" if source["kind"] == "message" else "PAGE_TOO_LONG")
         job = self.submit({"roomId":room, "kind":"translate", "sourceLanguage":"auto", "target":target, "sources":[source], "consent":True}, user)
@@ -459,13 +462,24 @@ class AIJobs:
         translation_contexts = []
         for evidence in job["evidence"]:
             translation_context = self.translation_context(job, evidence) if job["kind"] == "translate" else None
-            for chunk in split_text(evidence["text"], 2800):
+            for chunk in self.piece_texts(job["kind"], evidence):
                 pieces.append(f'[{evidence["id"]}] {chunk}' if job["kind"] != "translate" else chunk)
                 if translation_context is not None:
                     translation_contexts.append(translation_context)
         if len(pieces) > 16:
             raise HTTPException(422, "TOO_MANY_CHUNKS")
         return self.generate_pieces(job, pieces, check, translation_contexts)
+
+    @staticmethod
+    def piece_texts(kind, evidence):
+        text = evidence["text"]
+        source_kind = evidence["source"]["kind"]
+        if kind == "translate":
+            if source_kind == "message" and len(text) <= MAX_CHARS:
+                return [text]
+            if source_kind == "page":
+                return split_text(text)
+        return split_text(text, 2800)
 
     def translation_context(self, job, evidence):
         source = evidence["source"]
@@ -504,6 +518,14 @@ class AIJobs:
     def generate_pieces(self, job, pieces, check, translation_contexts=None):
         translation_flags = []
 
+        def record_call(text):
+            def count(value):
+                if value.get("callsUsed", 0) >= 32:
+                    raise HTTPException(422, "AI_TOTAL_CALL_LIMIT")
+                return {**value, "callsUsed":value.get("callsUsed", 0)+1}
+            self.db.update("AI_JOBS", job["jobId"], count)
+            self.budget(job, text)
+
         def generate(text, label, translation_context=None):
             self.get(job["jobId"], job["requester"])
             identity = {"parent":job["identity"], "stage":label, "textHash":digest(text)}
@@ -516,15 +538,13 @@ class AIJobs:
                         return {"text":text, "flags":{"cached":False, "sameLanguage":True, "languageMismatch":True}}
                     if source_language == job["target"]:
                         return {"text":text, "flags":{"cached":False, "sameLanguage":True}}
-                def count(value):
-                    if value.get("callsUsed", 0) >= 32:
-                        raise HTTPException(422, "AI_TOTAL_CALL_LIMIT")
-                    return {**value, "callsUsed":value.get("callsUsed", 0)+1}
-                self.db.update("AI_JOBS", job["jobId"], count)
-                self.budget(job, text)
-                if job["kind"] == "translate":
-                    output, cached = self.translation.translate_text(text, job["target"], job["requester"], source=source_language, context=scope)
+                    output, cached = self.translation.translate_text(
+                        text, job["target"], job["requester"], source=source_language,
+                        context=scope, room=job["roomId"], before_call=lambda: record_call(text),
+                    )
                     return {"text":output, "flags":{"cached":cached}}
+                self.translation.authorize_external(job["requester"], job["roomId"])
+                record_call(text)
                 return {"text":check(self.translation.translator.summarize(text, LANGUAGE_NAMES[job["target"]]))}
             result, cached_artifact = self.artifacts.run(identity, key, call, lambda:self.get(job["jobId"], job["requester"]))
             if job["kind"] == "translate":
@@ -563,6 +583,7 @@ class AIJobs:
         if job["attempts"] >= 3:
             try:
                 self.db.commit([record.change({**job, "status": "FAILED", "deadLetter": True, "errorCode": "WORKER_INTERRUPTED"})])
+                metrics.record("JobDeadLetters", Queue="AI")
             except Conflict:
                 pass
             return False
@@ -572,6 +593,8 @@ class AIJobs:
             self.db.commit([record.change(job)])
         except Conflict:
             return False
+        if job["attempts"] > 1:
+            metrics.record("RetryAttempts", Queue="AI")
         stop = threading.Event()
         def heartbeat():
             while not stop.wait(30):
@@ -588,16 +611,22 @@ class AIJobs:
                 job["resultKey"] = self.result_key(job, job_id)
             result, cached = self.artifacts.run(job["identity"], job["resultKey"], lambda:self.produce(job), lambda:self.get(job_id, job["requester"]))
             self.finish(job_id, lease, {"status": "COMPLETED", "resultKey": job["resultKey"], "leaseUntil": 0, "cached":cached})
+            if job["attempts"] > 1:
+                metrics.record("RetrySuccesses", Queue="AI")
             self.index(job)
             self.media.on_event(job["roomId"], {"type":"ai:updated", "jobId":job_id})
             return True
         except Exception as error:
-            terminal = isinstance(error, HTTPException) and error.status_code in (403, 404, 409, 422)
+            terminal = isinstance(error, HTTPException) and (
+                error.status_code in (403, 404, 409, 422) or error.detail == "AI_DAILY_CALL_LIMIT"
+            )
             failed = terminal or job["attempts"] >= 3
             self.finish(job_id, lease, {"status": "FAILED" if failed else "PENDING", "leaseUntil": 0,
                         "availableAt": time.time() + min(60, 2 ** job["attempts"]), "deadLetter": failed and not terminal,
                         "errorStatus": error.status_code if isinstance(error, HTTPException) else 502,
                         "errorCode": error.detail if isinstance(error, HTTPException) else "AI_UNAVAILABLE"})
+            if failed and not terminal:
+                metrics.record("JobDeadLetters", Queue="AI")
             return terminal
         finally:
             stop.set()

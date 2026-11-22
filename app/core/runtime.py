@@ -5,6 +5,7 @@ import os
 import secrets
 
 from app.ai.client import LambdaTranslator
+from app.ai.policy import ExternalAIPolicy
 from app.ai.service import TranslationService
 from app.auth.repository import AccountRepository, PersistentThrottle
 from app.auth.service import AuthService, TokenSigner, load_secret
@@ -55,7 +56,9 @@ room_folders = RoomFolders(db, room_repo, storage)
 sqs = config.aws_client("sqs") if config.MEDIA_QUEUE_URL else None
 media_svc = MediaService(storage, notify_room, db, room_repo, sqs, config.MEDIA_QUEUE_URL)
 # 번역은 업로드한 문서의 추출 글자도 읽어야 해서 media_svc가 만들어진 뒤에 구성한다.
-translation = TranslationService(db, room_repo, LambdaTranslator(config.TRANSLATE_URL, config.TRANSLATE_SECRET), config.TRANSLATE_HOURLY_LIMIT, media=media_svc)
+ai_policy = ExternalAIPolicy(db, room_repo, config.AI_DAILY_CALL_LIMIT, config.AI_ALLOW_PRIVATE_ROOMS)
+translator = LambdaTranslator(config.TRANSLATE_URL, config.TRANSLATE_SECRET, reserve_call=ai_policy.reserve_call)
+translation = TranslationService(db, room_repo, translator, config.TRANSLATE_HOURLY_LIMIT, media=media_svc, policy=ai_policy)
 from app.ai.jobs import AIJobs
 ai_queue_url = os.getenv("AI_QUEUE_URL", "")
 ai_jobs = AIJobs(db, room_repo, media_svc, translation, config.aws_client("sqs") if ai_queue_url else None, ai_queue_url)

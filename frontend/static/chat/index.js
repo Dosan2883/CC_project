@@ -241,19 +241,13 @@ function addMessage(m) {
 }
 
 /* ---------- 메시지 번역 ---------- */
-const TRANSLATE_CONSENT_KEY = "translateConsent";
-const hasTranslateConsent = () => { try { return localStorage.getItem(TRANSLATE_CONSENT_KEY) === "1"; } catch { return false; } };
-const rememberTranslateConsent = () => { try { localStorage.setItem(TRANSLATE_CONSENT_KEY, "1"); } catch {} };
 const translateErrors = { 429: "translateLimit", 503: "translateOff", 502: "translateFail" };
 
 async function translateMessage(m, bubble, button) {
   const shown = bubble.parentElement.querySelector(".translation");
   if (shown) { shown.remove(); button.textContent = t("translate"); return; }  // 다시 누르면 번역을 숨긴다
-  if (!hasTranslateConsent()) {  // 처음 한 번, 텍스트가 외부 AI 서비스로 나간다는 것을 알린다
-    if (!confirm(t("translateConsent"))) return;
-    rememberTranslateConsent();
-  }
   const roomId = currentRoom.roomId, target = targetLang, revision = m.revision || 1, generation = viewGeneration, authToken = token;
+  if (!await ensureAiConsent() || currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;
   button.disabled = true; button.textContent = t("translating"); setBusy(button, true);
   try {
     const result = await api("/api/ai/translate", "POST", { roomId, messageSeq: m.messageSeq, target });
@@ -267,7 +261,7 @@ async function translateMessage(m, bubble, button) {
     button.textContent = t("translateHide");
   } catch (error) {
     button.textContent = t("translate");
-    toast(t(error.code === "TEXT_TOO_LONG" ? "translateLong" : translateErrors[error.status] || "translateFail"));
+    toast(aiErrorText(error.code) || t(error.code === "TEXT_TOO_LONG" ? "translateLong" : translateErrors[error.status] || "translateFail"));
   } finally {
     button.disabled = false; setBusy(button, false);
   }

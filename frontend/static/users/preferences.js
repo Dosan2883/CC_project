@@ -27,3 +27,56 @@ $("srcLang").onchange = e => savePreferences({sourceLanguage: e.target.value});
 $("prefTarget").onchange = e => savePreferences({defaultTargetLanguage: e.target.value});
 $("tgtLang").onchange = e => savePreferences({defaultTargetLanguage: e.target.value});
 $("prefSubtitle").onchange = e => savePreferences({preferredSubtitleLanguage: e.target.value});
+
+async function ensureAiConsent() {
+  const session = token;
+  if (!session) return false;
+  try {
+    let consent = await api("/api/users/me/ai-consent");
+    if (token !== session) return false;
+    if (!consent.allowed) {
+      if (!confirm(t("translateConsent"))) return false;
+      consent = await api("/api/users/me/ai-consent", "PATCH", {allowed:true});
+    }
+    if (token !== session) return false;
+    $("prefAiConsent").checked = consent.allowed;
+    return consent.allowed === true;
+  } catch {
+    if (token === session) toast(t("failed"));
+    return false;
+  }
+}
+
+$("preferencesPanel").ontoggle = async () => {
+  if (!$("preferencesPanel").open || !token) return;
+  const control = $("prefAiConsent"), session = token;
+  control.disabled = true;
+  try {
+    const consent = await api("/api/users/me/ai-consent");
+    if (token === session) control.checked = consent.allowed;
+  } catch {
+    if (token === session) toast(t("failed"));
+  } finally {
+    control.disabled = false;
+  }
+};
+
+$("prefAiConsent").onchange = async event => {
+  const control = event.target, allowed = control.checked, session = token;
+  if (!session || (allowed && !confirm(t("translateConsent")))) {
+    control.checked = !allowed;
+    return;
+  }
+  control.disabled = true;
+  try {
+    const consent = await api("/api/users/me/ai-consent", "PATCH", {allowed});
+    if (token === session) control.checked = consent.allowed;
+  } catch {
+    if (token === session) {
+      control.checked = !allowed;
+      toast(t("failed"));
+    }
+  } finally {
+    control.disabled = false;
+  }
+};

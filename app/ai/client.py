@@ -12,6 +12,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 from app.ai.contract import MODEL_VERSION
+from app.core import metrics
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MAX_RESPONSE_BYTES = 64 * 1024
@@ -22,8 +23,9 @@ class TranslationUnavailable(Exception):
 
 
 class LambdaTranslator:
-    def __init__(self, url="", secret="", timeout=25):
+    def __init__(self, url="", secret="", timeout=25, *, reserve_call=None):
         self.url, self.secret, self.timeout = url.strip(), secret, timeout
+        self.reserve_call = reserve_call
         if self.url:
             parsed = urlparse(self.url)
             # https만 허용한다. 비밀 헤더가 암호화 없이 나가거나, file:// 같은 주소를 여는 일을 막는다.
@@ -44,6 +46,16 @@ class LambdaTranslator:
     def invoke(self, text, target_name, action, source_name=None):
         if not self.configured:
             raise TranslationUnavailable("not configured")
+        if self.reserve_call is not None:
+            self.reserve_call()
+        metrics.record("AIUpstreamCalls")
+        try:
+            return self._invoke(text, target_name, action, source_name)
+        except TranslationUnavailable:
+            metrics.record("AIUpstreamFailures")
+            raise
+
+    def _invoke(self, text, target_name, action, source_name):
         request = urllib.request.Request(
             self.url,
             data=json.dumps({"text": text, "target": target_name, **({"action": action} if action != "translate" else {}), **({"source": source_name} if source_name else {})}).encode(),
@@ -57,6 +69,8 @@ class LambdaTranslator:
                     raise TranslationUnavailable("response too large")
                 data = json.loads(raw)
         except urllib.error.HTTPError as error:
+            if error.code == 429:
+                metrics.record("AIUpstreamRateLimited")
             error.close()  # 오류 응답도 연결을 닫아야 누수되지 않는다
             raise TranslationUnavailable(f"HTTP {error.code}") from error
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:

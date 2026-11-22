@@ -4,9 +4,11 @@
 결과 형태: {"pages": [페이지별 텍스트], "needsOcr": 텍스트가 없어 OCR이 필요한지}
 """
 import io
+import time
 import zipfile
 from typing import Callable
 from xml.etree import ElementTree as ET
+from app.core import metrics
 
 MAX_PAGES = 300
 MAX_UNCOMPRESSED = 50 * 1024 * 1024  # DOCX 압축 해제 크기 상한 (zip bomb 방지)
@@ -96,10 +98,15 @@ EXTRACTORS = {"txt": extract_txt, "pdf": extract_pdf, "docx": extract_docx}
 def extract_media(ext: str, data: bytes, on_progress: Progress, language="auto") -> dict:
     """음성·영상을 글자로 바꾼다. 결과는 pages 없이 segments [{start, end, text}]로 돌려준다."""
     from app.media.whisper import SpeechError, transcribe_bytes
+    start = time.monotonic()
+    measured_language = language
     try:
         out = transcribe_bytes(data, ext, language, on_progress)
+        measured_language = out["language"]
     except SpeechError as error:
         raise ExtractError(error.code) from error
+    finally:
+        metrics.extraction_duration("STT", measured_language, start)
     return {"pages": [], "needsOcr": False, "segments": out["segments"], "language": out["language"],
             "durationSeconds": out["durationSeconds"], "recognitionModel": out["model"], "version": 1}
 
@@ -125,6 +132,7 @@ def extract(ext: str, data: bytes, on_progress: Progress, language="auto") -> di
     for index, text in enumerate(result["pages"]):
         detail = {"page": index + 1, "method": "text", "regions": [], "needsReview": False}
         if not text.strip():
+            start = time.monotonic()
             try:
                 detail.update(recognize(raster(data, ext, index + 1), language), method="ocr")
                 result["pages"][index] = detail.pop("text")
@@ -132,6 +140,8 @@ def extract(ext: str, data: bytes, on_progress: Progress, language="auto") -> di
                 detail.update(method="ocr", needsReview=True, error="OCR_NOT_INSTALLED")
             except Exception:
                 detail.update(method="ocr", needsReview=True, error="OCR_FAILED")
+            finally:
+                metrics.extraction_duration("OCR", detail.get("language") or language, start)
         if detail["method"] == "text":
             from app.core.language import detect
             detail.update({k:v for k,v in detect(result["pages"][index]).items() if k != "method"})

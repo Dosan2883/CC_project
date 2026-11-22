@@ -11,7 +11,7 @@ from app.ai.routes import router as ai_router
 from app.auth.routes import router as auth_router
 from app.calendar.routes import router as calendar_router
 from app.chat.routes import router as chat_router
-from app.core import runtime
+from app.core import metrics, runtime
 from app.core.config import FRONTEND_DIR, LANGUAGES, RUN_MEDIA_WORKER
 from app.media.routes import router as media_router
 from app.rooms.routes import router as rooms_router
@@ -31,6 +31,7 @@ async def lifespan(_: FastAPI):
         runtime.media_svc.queue.start()
     if not runtime.ai_queue_url:
         runtime.ai_jobs.queue.start()
+    stop_metrics = metrics.start("Web", lambda: runtime.manager.connection_count)
     try:
         yield
     finally:
@@ -42,6 +43,7 @@ async def lifespan(_: FastAPI):
         if RUN_MEDIA_WORKER:
             await asyncio.to_thread(runtime.media_svc.queue.stop)
         await runtime.manager.stop()
+        await asyncio.to_thread(stop_metrics)
         runtime.loop = None
 
 
@@ -54,6 +56,26 @@ app.include_router(chat_router)
 app.include_router(users_router)
 app.include_router(ai_router)
 app.include_router(calendar_router)
+
+if metrics.ENABLED:
+    @app.middleware("http")
+    async def record_ai_requests(request, call_next):
+        path = request.url.path
+        submission = request.method == "POST" and (path.startswith("/api/ai/") or path.endswith("/events/suggest"))
+        translated_subtitles = path.endswith("/subtitles") and request.query_params.get("target", "original") != "original"
+        if not (submission or translated_subtitles):
+            return await call_next(request)
+        metrics.record("AIHTTPRequests")
+        try:
+            response = await call_next(request)
+        except Exception:
+            metrics.record("AIHTTPFailures")
+            raise
+        if response.status_code == 429:
+            metrics.record("AIHTTPRateLimited")
+        if response.status_code >= 500:
+            metrics.record("AIHTTPFailures")
+        return response
 
 
 @app.get("/health/live")

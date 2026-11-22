@@ -92,8 +92,13 @@ def split_text(text, limit=CHUNK_CHARS):
 
 
 class TranslationService:
-    def __init__(self, db, rooms, translator, hourly_limit=60, media=None):
+    def __init__(self, db, rooms, translator, hourly_limit=60, media=None, *, policy=None):
         self.db, self.rooms, self.translator, self.hourly_limit, self.media = db, rooms, translator, hourly_limit, media
+        self.policy = policy
+
+    def authorize_external(self, user, room):
+        if self.policy is not None:
+            self.policy.authorize(user, room)
 
     def translate_message(self, room_id, seq, target, user):
         if getattr(self, "jobs", None):
@@ -127,7 +132,7 @@ class TranslationService:
         if source and not text_matches_language(text, source):  # 설정한 원문 언어와 실제 글이 다르면 그대로 둔다
             verify()
             return {"translated": text, "target": target, "cached": False, "sameLanguage": True, "languageMismatch": True}
-        translated, cached = self.translate_text(text, target, user, verify, source, context)
+        translated, cached = self.translate_text(text, target, user, verify, source, context, room=room_id)
         verify()
         return {"translated": translated, "target": target, "cached": cached, "sameLanguage": False}
 
@@ -180,7 +185,7 @@ class TranslationService:
         batches.append(current)
         values = [None] * len(segments)
         for batch in batches:
-            output, _ = self.translate_text("\n".join(line for _, line in batch), target, user, verify, source, context)
+            output, _ = self.translate_text("\n".join(line for _, line in batch), target, user, verify, source, context, room=asset["roomId"])
             parsed = parse_numbered(output)
             if all(parsed.get(index + 1) for index, _ in batch):
                 for index, _ in batch:
@@ -188,7 +193,7 @@ class TranslationService:
                 continue
             # 번호가 하나라도 빠지면 줄이 이웃 구간에 붙어 어긋났을 수 있으므로, 그 묶음은 구간마다 따로 번역한다
             for index, _ in batch:
-                values[index], _ = self.translate_text(segments[index]["text"], target, user, verify, source, context)
+                values[index], _ = self.translate_text(segments[index]["text"], target, user, verify, source, context, room=asset["roomId"])
         verify()
         return result(values)
 
@@ -227,7 +232,8 @@ class TranslationService:
             raise HTTPException(422, "PAGE_TOO_LONG")
         detail = transcript.get("pageDetails") or []
         detail = detail[page - 1] if len(detail) >= page and isinstance(detail[page - 1], dict) else {}
-        source = self.source_language((transcript.get("corrections") or {}).get(str(page), {}).get("language") or detail.get("language"))
+        source = self.source_language((transcript.get("corrections") or {}).get(str(page), {}).get("language")
+                                      or detail.get("language") or transcript.get("language"))
         def checked(result):
             verify()
             return result
@@ -251,7 +257,7 @@ class TranslationService:
             return checked({"translated": cached, "target": target, "page": page, "cached": True})
         chunks = split_text(text)
         if len(chunks) == 1:
-            translated, was_cached = self.translate_text(text, target, user, verify, source, context)
+            translated, was_cached = self.translate_text(text, target, user, verify, source, context, room=asset["roomId"])
             return checked({"translated": translated, "target": target, "page": page, "cached": was_cached})
         page_key = "TRANSLATION#" + key[:2]
         lease, saved = self.acquire(page_key, key)
@@ -273,10 +279,11 @@ class TranslationService:
                     if value is not None:
                         self.release(user, [reservation_id])
                     else:
-                        self.mark_attempted(user, [reservation_id])
                         later = [reservation_by_index[i] for i in missing if i > index]
                         try:
                             verify()
+                            self.authorize_external(user, asset["roomId"])
+                            self.mark_attempted(user, [reservation_id])
                             value = self.call_translator(chunks[index], target, source)
                             value = self.complete(chunk_pk, chunk_key, target, value, chunk_lease)
                         except Exception:
@@ -361,7 +368,7 @@ class TranslationService:
             return value
         self.db.update(pk, key, release)
 
-    def translate_text(self, text, target, user, verify=None, source=None, context=None):
+    def translate_text(self, text, target, user, verify=None, source=None, context=None, *, room=None, before_call=None):
         verify = verify or (lambda: None)
         key, cached = self.cached(target, text, source, context)
         if cached:
@@ -375,7 +382,10 @@ class TranslationService:
         reservation = None
         try:
             verify()
+            self.authorize_external(user, room if room is not None else (context or {}).get("room"))
             reservation = self.reserve(user, 1)[0]
+            if before_call is not None:
+                before_call()
             self.mark_attempted(user, [reservation])
             translated = self.call_translator(text, target, source)
             verify()

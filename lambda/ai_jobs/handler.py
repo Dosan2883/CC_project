@@ -3,6 +3,14 @@ import json
 
 
 def handler(event, context):
+    from app.core import metrics
+    try:
+        return process(event)
+    finally:
+        metrics.flush()
+
+
+def process(event):
     from app.core.runtime import ai_jobs
     if event.get("source") == "aws.events":
         ai_jobs.queue.recover()

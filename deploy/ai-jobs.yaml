@@ -23,6 +23,22 @@ Parameters:
   TranslateSecret:
     Type: String
     NoEcho: true
+  EnableMonitoring:
+    Type: String
+    Default: '0'
+    AllowedValues: ['0', '1']
+  MetricsNamespace:
+    Type: String
+    Default: Messenger
+    AllowedPattern: '[A-Za-z][A-Za-z0-9_-]{0,63}'
+  AIDailyCallLimit:
+    Type: Number
+    Default: 500
+    MinValue: 0
+  AIAllowPrivateRooms:
+    Type: String
+    Default: '0'
+    AllowedValues: ['0', '1']
 Resources:
   DeadLetters:
     Type: AWS::SQS::Queue
@@ -58,6 +74,10 @@ Resources:
           TRANSLATE_URL: !Ref TranslateUrl
           TRANSLATE_SECRET: !Ref TranslateSecret
           RUN_MEDIA_WORKER: '0'
+          CLOUDWATCH_METRICS: !Ref EnableMonitoring
+          CLOUDWATCH_NAMESPACE: !Ref MetricsNamespace
+          AI_DAILY_CALL_LIMIT: !Sub '${AIDailyCallLimit}'
+          AI_ALLOW_PRIVATE_ROOMS: !Ref AIAllowPrivateRooms
   Mapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
@@ -84,3 +104,5 @@ Outputs:
     Value: !Ref Queue
   AIDLQUrl:
     Value: !Ref DeadLetters
+  AIDLQName:
+    Value: !GetAtt DeadLetters.QueueName

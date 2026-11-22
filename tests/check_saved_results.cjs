@@ -10,14 +10,17 @@ const response=value=>({ok:true,status:200,json:async()=>value,blob:async()=>({}
   const result={text:'저장 요약 [1]',evidence:[{id:1,text:'original',sentAt:0,source:{kind:'message',messageSeq:1}}]};
   const stored={jobId:'saved',entryId:'saved',title:'저장 요약',requester:'owner',status:'COMPLETED',kind:'meeting-summary',target:'ko',attempts:1,result};
   const summaries=[{jobId:'saved',entryId:'saved',kind:'meeting-summary',title:'저장 요약',target:'ko',requester:'owner',createdAt:1,updatedAt:1}];
+  let reuse=false;
   context.fetch=async(url,options={})=>{
     calls.push({url,method:options.method||'GET',body:options.body&&JSON.parse(options.body)});
+    if(url==='/api/users/me/ai-consent') return response({allowed:true});
     if(url==='/api/ai/rooms/r/summaries') return response(summaries);
     if(url==='/api/ai/rooms/r/summaries/saved') return response({entryId:'saved',title:'저장 요약',result});
-    if(url==='/api/ai/jobs') return response({jobId:'saved'});
+    if(url==='/api/ai/jobs') return response(reuse ? {...stored, existing:true, cached:true} : {jobId:'saved'});
     if(url==='/api/ai/jobs/saved') return response(stored);
     if(url==='/api/ai/translate') return response({translated:'원문 번역'});
     if(url==='/api/media/f') return response({status:'UPLOADED',progress:0});
+    if(url==='/api/media/long-pdf/transcript') return response({pages:['가'.repeat(3600)]});
     if(url==='/api/auth/signup') return response({token:'new-token',nickname:'japanese'});
     if(url==='/api/users/me/preferences') return response({uiLocale:'ja',sourceLanguage:'ja',defaultTargetLanguage:'ja',preferredSubtitleLanguage:'ja'});
     return response([]);
@@ -34,7 +37,7 @@ const response=value=>({ok:true,status:200,json:async()=>value,blob:async()=>({}
   evaluate('updateSummarySelection(1,{kind:"message",messageSeq:1},8,true)');
   assert.ok(elements.get('sumCount').textContent.includes('1'));
   const before=calls.filter(c=>c.method==='POST').length;
-  await evaluate('runAi([...aiSelections.values()], "meeting-summary")'); await tick();
+  await elements.get('sumGenerate').onclick(); await tick();
   assert.equal(calls.filter(c=>c.method==='POST').length,before+1);
   assert.ok(calls.some(c=>c.url==='/api/ai/jobs'&&c.method==='POST'));
   assert.equal(calls.filter(c=>c.url==='/api/ai/translate').length,0,'completed summary evidence remains untranslated until requested');
@@ -42,6 +45,17 @@ const response=value=>({ok:true,status:200,json:async()=>value,blob:async()=>({}
   const evidenceBox=float.children[1].children.at(-1), translateButton=evidenceBox.children[1].children[1];
   await translateButton.onclick();
   assert.equal(calls.filter(c=>c.url==='/api/ai/translate').length,1,'only the explicit evidence action calls translation');
+
+  reuse=true;
+  const polls=calls.filter(c=>c.url==='/api/ai/jobs/saved').length;
+  await elements.get('sumGenerate').onclick(); await tick();
+  const reused=context.document.body.children.filter(node=>node.className==='float-win').at(-1);
+  assert.equal(reused.children[1].children[0].textContent,evaluate('t("summaryExists")'));
+  assert.equal(calls.filter(c=>c.url==='/api/ai/jobs/saved').length,polls,'a reused summary does not poll a job');
+
+  await evaluate('pdfSummarizeAll({mediaId:"long-pdf"})');
+  const pdfJob=calls.filter(c=>c.url==='/api/ai/jobs'&&c.method==='POST').at(-1);
+  assert.deepEqual(pdfJob.body.sources,[{kind:'page',mediaId:'long-pdf',page:1}],'PDFs above 3500 characters reach the server');
 
   // A file card in UPLOADED state offers original/AI actions without scheduling extraction.
   evaluate('fileCard({mediaId:"f",filename:"sample.pdf",ext:"pdf",size:3})'); await tick();

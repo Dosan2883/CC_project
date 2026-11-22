@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 import time
+from app.core import metrics
 
 log = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ class MediaWorker:
         self.stop_event = threading.Event()
         self.thread = None
         self.heartbeat_interval = 25
+        self.last_metric = 0
 
     def send(self, job_id):
         if self.client:
@@ -35,7 +37,14 @@ class MediaWorker:
         if getattr(self.service, "jobs_partition", "") == "AI_JOBS":
             from app.ai.refresh import recover
             recover(self.service)
-        for record in self.service.db.query(getattr(self.service, "jobs_partition", "MEDIA_JOBS")):
+        partition = getattr(self.service, "jobs_partition", "MEDIA_JOBS")
+        records = self.service.db.query(partition)
+        now = time.monotonic()
+        if metrics.ENABLED and (self.last_metric == 0 or now - self.last_metric >= 60):
+            metrics.record("PendingJobs", sum(row.value["status"] == "PENDING" for row in records),
+                           Queue="AI" if partition == "AI_JOBS" else "Media")
+            self.last_metric = now
+        for record in records:
             job = record.value
             if job["status"] in ("PENDING", "PROCESSING") and job.get("leaseUntil", 0) < time.time() and job.get("availableAt", 0) <= time.time():
                 if self.client:

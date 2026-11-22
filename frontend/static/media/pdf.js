@@ -1,7 +1,6 @@
 /* PDF 파일 카드의 기능 3가지: 원본 보기, 전체 번역, 전체 요약.
    눌러서 열리는 창은 모두 떠 있는 창(floatwin.js)이라 위치와 크기를 마음대로 바꿀 수 있다. */
 const PDF_SUMMARY_PAGES = 20;     // 서버가 한 번에 받는 자료 수의 상한
-const PDF_SUMMARY_CHARS = 3500;   // 서버가 한 번에 요약하는 글자 수의 상한
 
 function pdfButtons(m) {
   const make = (label, handler) => { const button = el("button", null, label); button.type = "button"; button.onclick = handler; return button; };
@@ -36,13 +35,6 @@ function pageNav(total, onChange) {
   return {node, go, page: () => page};
 }
 
-function ensureConsent() {
-  if (hasTranslateConsent()) return true;
-  if (!confirm(t("translateConsent"))) return false;
-  rememberTranslateConsent();
-  return true;
-}
-
 /* 원본 보기: 서버가 그린 페이지 이미지를 쪽마다 보여 준다. 이미지에는 로그인 토큰을 실을 수 없어 받아서 표시한다. */
 async function openPdfOriginal(m) {
   let total;
@@ -74,11 +66,12 @@ async function openPdfOriginal(m) {
 
 /* 전체 번역: 쪽을 차례로 번역해 오는 대로 보여 준다. 중간에 닫거나 한도를 넘으면 멈춘다. */
 async function openPdfTranslateAll(m) {
-  if (!ensureConsent()) return;
+  const target = targetLang, epoch = itemEpoch(`file:${m.mediaId}`), generation = viewGeneration, authToken = token;
+  if (!await ensureAiConsent() || generation !== viewGeneration || authToken !== token) return;
   let pages;
   try { pages = await pdfPages(m.mediaId); } catch { return toast(t("failed")); }
   if (!pages.length) return toast(t("emptyText"));
-  const target = targetLang, epoch = itemEpoch(`file:${m.mediaId}`), generation = viewGeneration, authToken = token;
+  if (generation !== viewGeneration || authToken !== token) return;
   const win = openFloatWindow(`${m.filename} · ${t("pdfTranslateAll")} (${LANG_NAMES[target]})`, {width: 520, height: 620});
   const status = el("small", "pdf-status"), list = el("div", "pdf-results");
   win.body.append(status, list);
@@ -96,7 +89,7 @@ async function openPdfTranslateAll(m) {
       block.append(el("div", "pdf-translated", result.translated));
     } catch (error) {
       if (!alive()) return;
-      block.append(el("div", "pdf-note err", t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail")));
+      block.append(el("div", "pdf-note err", aiErrorText(error.code) || t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail")));
       if (error.status !== 422) { status.textContent = t("pdfStopped"); return; }  // 그 쪽만의 문제(너무 긴 쪽 등, 422)가 아니면 서버·한도 문제라 더 시도하지 않는다
     }
   }
@@ -104,13 +97,12 @@ async function openPdfTranslateAll(m) {
   } finally { setBusy(status, false); }
 }
 
-/* 전체 요약: 모든 쪽을 하나의 요약으로 만든다. 서버가 한 번에 받는 양(20쪽, 3500자)을 넘으면 미리 알려 준다. */
+/* 전체 요약은 텍스트가 있는 쪽을 고르고, 전체 글자 수는 서버에서 검사한다. */
 async function pdfSummarizeAll(m) {
   let pages;
   try { pages = await pdfPages(m.mediaId); } catch { return toast(t("failed")); }
   const filled = pages.map((text, index) => ({text: text.trim(), page: index + 1})).filter(item => item.text);
   if (!filled.length) return toast(t("pdfNoText"));
   if (filled.length > PDF_SUMMARY_PAGES) return toast(t("pdfTooManyPages"));
-  if (filled.reduce((sum, item) => sum + item.text.length, 0) > PDF_SUMMARY_CHARS) return toast(t("pdfTooLong"));
-  runAi(filled.map(item => ({kind: "page", mediaId: m.mediaId, page: item.page})), "summarize");
+  return runAi(filled.map(item => ({kind: "page", mediaId: m.mediaId, page: item.page})), "summarize");
 }

@@ -1,10 +1,12 @@
 """연결은 각 서버, 이벤트와 접속 현황은 Redis, 기록은 DB에서 관리한다."""
 import asyncio
 import logging
+import time
 from contextlib import suppress
 
 from fastapi import HTTPException
 from app.chat.events import EventBus
+from app.core import metrics
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,10 @@ class ConnectionManager:
             await ws.send_json(message)
             self.cursors[ws] = message["messageSeq"]
 
+    @property
+    def connection_count(self):
+        return len(self.cursors)
+
     async def deliver(self, room, payload):
         if payload["type"] == "presence:refresh":
             for rid in list(self.conns):
@@ -60,7 +66,13 @@ class ConnectionManager:
                                 await ws.send_json(payload)
                             await ws.close(code=4404 if error.status_code == 404 else 4000)
                             continue
+                        before = self.cursors.get(ws, 0)
                         await self.replay(room, ws)
+                        delivered = self.cursors.get(ws, before)
+                        if payload["type"] == "message:new" and before < payload["messageSeq"] <= delivered:
+                            sent_at = payload.get("sentAt")
+                            if isinstance(sent_at, (int, float)):
+                                metrics.record("MessageDeliveryMs", max(0, time.time() * 1000 - sent_at), "Milliseconds")
                         if payload["type"] != "message:new":
                             await ws.send_json(payload)
                 except Exception:

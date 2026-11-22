@@ -41,6 +41,7 @@ function showEvidence(box, evidence, target, active) {
     if (!canTranslateEvidence(e)) continue;  // 일부 구간 선택, 녹취, 음성 전체는 번역 버튼이 없다
     const button = document.createElement("button"); button.type = "button"; button.textContent = t("translate");
     button.onclick = async () => {
+      if (!await ensureAiConsent() || !active()) return;
       button.disabled = true;
       try {
         const translated = await translateEvidence(e, target);
@@ -73,11 +74,8 @@ function summaryNameRow(roomId, entryId, active) {
 
 async function runAi(sources, kind = "summarize") {
   if (!currentRoom || !sources.length) return toast("메시지 또는 문단을 먼저 선택하세요.");
-  if (!hasTranslateConsent()) {
-    if (!confirm(t("translateConsent"))) return;
-    rememberTranslateConsent();
-  }
   const roomId = currentRoom.roomId, generation = viewGeneration, authToken = token;
+  if (!await ensureAiConsent() || currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;
   // 번역은 번역 대상 언어로, 요약은 앱 표시 언어로 만든다. 근거 원문은 번역 대상 언어로 보여 준다.
   const firstSource = sources[0];
   const selectedTarget = targetLang;
@@ -91,11 +89,13 @@ async function runAi(sources, kind = "summarize") {
   let jobId;
   const active = () => win.open && currentRoom?.roomId === roomId && generation === viewGeneration && token === authToken;
   async function showExisting(info) {  // 이미 만들어진 요약이면 새로 만들지 않고 저장된 내용을 보여 준다
-    state.textContent = "";  // 저장된 요약이면 안내 문구 없이 내용만 바로 보여 준다
     const full = await api(`/api/ai/rooms/${roomId}/summaries/${info.entryId}`);
     if (!active()) return;
+    state.textContent = t("summaryExists");
+    setBusy(state, false);
     output.textContent = [full.title, full.result.text].join("\n\n");
     showEvidence(evidenceBox, full.result.evidence, evidenceLanguage, active);
+    refreshSummaries();
     if (kind !== "translate" && typeof addDeadlineFinder === "function") addDeadlineFinder(finderSlot, sources, active);
   }
   async function poll() {
@@ -113,7 +113,7 @@ async function runAi(sources, kind = "summarize") {
         return;
       }
       if (job.status === "FAILED") {
-        state.textContent += ` · ${job.errorCode}`;
+        state.textContent += ` · ${aiErrorText(job.errorCode) || job.errorCode}`;
         const retryButton = document.createElement("button"); retryButton.textContent = t("retry");
         retryButton.onclick = async () => { retryButton.remove(); setBusy(state, true); try { const again = await api(`/api/ai/jobs/${jobId}/retry`, "POST"); if (again.existing) return await showExisting(again); jobId = again.jobId; await poll(); } catch (e) { state.textContent = e.code || t("failed"); setBusy(state, false); } };
         win.body.append(retryButton); return;

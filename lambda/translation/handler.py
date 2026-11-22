@@ -163,6 +163,9 @@ def handler(event, context):
 
     try:
         return _json_response(200, _translate(text, target, action))
-    except Exception:
+    except Exception as error:
+        code = getattr(error, "response", {}).get("Error", {}).get("Code")
+        if code in ("ThrottlingException", "TooManyRequestsException"):
+            return _json_response(429, {"error": "translation rate limited"})
         logger.exception("Bedrock translation request failed")
         return _json_response(502, {"error": "translation unavailable"})

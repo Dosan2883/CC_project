@@ -25,6 +25,7 @@ const timers = new Map();
 let timerId = 0, focused = false;
 const requests = [];
 let saved = {uiLocale: "en", sourceLanguage: "ja", defaultTargetLanguage: "fr", preferredSubtitleLanguage: "es"};
+let aiConsent = false;
 const document = {
   documentElement: {}, body: new Element(), visibilityState: "visible", hasFocus: () => focused,
   getElementById(id) { assert.ok(elements.has(id), "missing DOM element: " + id); return elements.get(id); },
@@ -52,6 +53,9 @@ const context = vm.createContext({
     else if (url === "/api/users/me/preferences") {
       if (method === "PATCH") saved = {...saved, ...body};
       result = saved;
+    } else if (url === "/api/users/me/ai-consent") {
+      if (method === "PATCH") aiConsent = body.allowed;
+      result = {allowed: aiConsent};
     } else if (url.endsWith("/members")) result = [{user: "owner", role: "owner", lastReadSeq: 0}];
     else if (url.endsWith("/read")) result = {lastReadSeq: body.lastReadSeq};
     else if (url === "/api/rooms" || url === "/api/rooms/public") result = [];
@@ -75,6 +79,14 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(elements.get("prefSubtitle").value, "es");
   await evaluate('savePreferences({defaultTargetLanguage: "zh-CN"})');
   assert.equal(elements.get("tgtLang").value, "zh-CN");
+  assert.equal(await evaluate("ensureAiConsent()"), true);
+  const consentControl = elements.get("prefAiConsent");
+  assert.equal(consentControl.checked, true);
+  consentControl.checked = false;
+  await consentControl.onchange({target: consentControl});
+  assert.equal(aiConsent, false);
+  assert.deepEqual(requests.filter(req => req.url === "/api/users/me/ai-consent" && req.method === "PATCH")
+    .map(req => req.body.allowed), [true, false]);
   evaluate('enterRoom({roomId: "room", name: "Room", createdBy: "owner", lastReadSeq: 0})');
   await tick();
   assert.equal(elements.get("deleteRoom").hidden, false);

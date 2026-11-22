@@ -29,6 +29,7 @@ def recover(jobs):
                     continue
                 body = {k:original.value[k] for k in ("roomId", "kind", "sourceLanguage", "target", "sources", "consent")}
                 try:
+                    jobs.translation.authorize_external(old["requester"], task["room"])
                     jobs.submit(body, old["requester"])
                 except HTTPException as error:
                     if error.status_code not in (403, 404):
@@ -42,6 +43,7 @@ def recover(jobs):
                 for sub in jobs.db.query("SUBTITLE#" + media_id):
                     user, target = sub.value["user"], sub.value["target"]
                     try:
+                        jobs.translation.authorize_external(user, task["room"])
                         result = jobs.translation.translate_segments(media_id, target, user)
                         key = f"subtitles/{media_id}/{result['version']}/{target}.vtt"
                         jobs.media.storage.put(key, webvtt(result["segments"], True).encode())

@@ -11,6 +11,7 @@ import time
 import uuid
 
 from fastapi import HTTPException
+from app.core import metrics
 from app.core.database import Change, Conflict
 from app.media.extractors import ExtractError, extract
 from app.media.queue import MediaWorker
@@ -309,6 +310,7 @@ class MediaService:
                 self.db.commit([record.change({**job, "status": "FAILED", "errorCode": "PROCESSING_ERROR", "deadLetter": True})])
             except Conflict:
                 return False
+            metrics.record("JobDeadLetters", Queue="Media")
             self.emit(asset)
             return False
         job.update(status="PROCESSING", progress=0, errorCode=None, leaseToken=lease, leaseUntil=time.time() + 90, attempts=job.get("attempts", 0) + 1)
@@ -316,6 +318,8 @@ class MediaService:
             self.db.commit([room.change(room.value, check=True), record.change(job)])
         except Conflict:
             return False
+        if job["attempts"] > 1:
+            metrics.record("RetryAttempts", Queue="Media")
         stop = threading.Event()
 
         def heartbeat():
@@ -336,7 +340,9 @@ class MediaService:
             result["version"] = asset.get("extractionVersion", 0) + 1
             key = f'rooms/{asset["roomId"]}/files/{asset["mediaId"]}/extracted/{result["version"]}/{lease}.json'
             self.storage.put(key, json.dumps(result, ensure_ascii=False).encode())
-            self.finish(job_id, lease, asset, result, key)
+            published = self.finish(job_id, lease, asset, result, key)
+            if published and job["attempts"] > 1:
+                metrics.record("RetrySuccesses", Queue="Media")
             terminal = True
         except LeaseLost:
             return False
@@ -348,6 +354,8 @@ class MediaService:
             failed = job["attempts"] >= MAX_RETRIES
             self.update_leased(job_id, lease, {"status": "FAILED" if failed else "PENDING", "errorCode": "PROCESSING_ERROR" if failed else "RETRYING",
                                "retryCount": job["attempts"], "deadLetter": failed, "leaseUntil": 0, "availableAt": time.time() + 2 ** job["attempts"]})
+            if failed:
+                metrics.record("JobDeadLetters", Queue="Media")
             terminal = False
         finally:
             stop.set()
@@ -363,12 +371,12 @@ class MediaService:
         media = self.db.get("MEDIA", "ASSET#" + asset["mediaId"])
         if media.value.get("extractionVersion", 0) != asset.get("extractionVersion", 0):
             self.db.commit([record.change({**record.value, "status": "CANCELLED", "errorCode": "SOURCE_VERSION_CHANGED", "leaseUntil": 0})])
-            return
+            return False
         try:
             room = self.rooms.record(asset["roomId"])
         except HTTPException:
             self.db.commit([record.change({**record.value, "status": "CANCELLED", "errorCode": "ROOM_DELETED", "leaseUntil": 0})])
-            return
+            return False
         from app.ai.refresh import request as refresh_request
         self.db.commit([room.change(room.value, check=True),
                         refresh_request(asset["roomId"], {"mediaId":asset["mediaId"]}, key),
@@ -377,3 +385,4 @@ class MediaService:
                                       "detectedLanguages": sorted({p["language"] for p in result.get("pageDetails", []) if p.get("language")}),
                                       "recognitionModel": sorted({p["model"] for p in result.get("pageDetails", []) if p.get("model")})})])
         self.on_event(asset["roomId"], {"type":"source:updated", "mediaId":asset["mediaId"], "version":result["version"]})
+        return True

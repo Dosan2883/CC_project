@@ -148,6 +148,7 @@ class DeadlineFinder:
             return {"suggestions": cached.value["items"], "cached": True}
         if not self.translator.configured:
             raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
+        self.translation.authorize_external(user, room_id)
         reservation = self.translation.reserve(user)  # 번역·요약과 같은 사용자별 호출 한도를 쓴다
         try:
             self.translation.mark_attempted(user, reservation)
