@@ -2,7 +2,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.ai.routes import Source
@@ -50,7 +50,7 @@ async def announce(room_id, action, event_id, user):
 @router.post("/api/rooms/{room_id}/events/suggest")
 async def suggest_events(room_id: str, body: SuggestBody, user: str = Depends(current_user)):
     """선택한 자료에서 마감·일정 후보를 찾는다. 후보는 저장하지 않는다(저장은 일정 추가 API)."""
-    sources = [source.model_dump() for source in body.sources]
+    sources = [source.model_dump(exclude_none=True) for source in body.sources]
     return await asyncio.to_thread(finder.suggest, room_id, user, sources, body.tzOffsetMinutes, body.consent)
 
 
@@ -60,9 +60,12 @@ def list_events(room_id: str, month: str | None = None, user: str = Depends(curr
 
 
 @router.post("/api/rooms/{room_id}/events", status_code=201)
-async def create_event(room_id: str, body: EventBody, user: str = Depends(current_user)):
-    event = await asyncio.to_thread(service.create, room_id, user, body.model_dump())
-    await announce(room_id, "created", event["id"], user)
+async def create_event(room_id: str, body: EventBody, response: Response, user: str = Depends(current_user)):
+    event, created = await asyncio.to_thread(service.create_with_status, room_id, user, body.model_dump())
+    if created:
+        await announce(room_id, "created", event["id"], user)
+    else:
+        response.status_code = 200
     return event
 
 

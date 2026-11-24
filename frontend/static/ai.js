@@ -96,7 +96,7 @@ async function runAi(sources, kind = "summarize") {
     output.textContent = [full.title, full.result.text].join("\n\n");
     showEvidence(evidenceBox, full.result.evidence, evidenceLanguage, active);
     refreshSummaries();
-    if (kind !== "translate" && typeof addDeadlineFinder === "function") addDeadlineFinder(finderSlot, sources, active);
+    if (!full.stale && full.sources?.length) addDeadlineFinder(finderSlot, full.sources, active);
   }
   async function poll() {
     for (let i = 0; i < 180 && active(); i++) {
@@ -133,13 +133,13 @@ async function runAi(sources, kind = "summarize") {
 }
 
 
-function pageReview(mediaId, page, pre, transcript) {
+function pageReview(mediaId, page, pre, transcript, {active = () => true, onCorrect} = {}) {
   const controls = document.createElement("div");
   const language = document.createElement("select");
   for (const code of ["ko", "en", "ja", "zh-CN", "es", "fr"]) language.add(new Option(LANG_NAMES[code] || code, code));
   const detail = transcript.pageDetails?.[page - 1];
   language.value = transcript.corrections?.[String(page)]?.language || detail?.language || "ko";
-  const note = document.createElement("p"); note.textContent = detail ? `${detail.method} · ${detail.model || "텍스트 추출"} · ${detail.language || "미지정"}${detail.needsReview ? " · 원문 확인 필요" : ""}${detail.error ? " · " + detail.error : ""}` : "추출 원문";
+  const note = document.createElement("p"); note.textContent = detail ? `${detail.method} · ${detail.model || "텍스트 추출"} · ${detail.language || "미지정"}${detail.needsReview ? " · 원문 확인 필요" : ""}${detail.error ? " · " + (t("fe_" + detail.error) || detail.error) : ""}` : "추출 원문";
   const editor = document.createElement("textarea"); editor.value = transcript.pages[page - 1] || ""; editor.rows = 8; editor.style.width = "100%";
   const button = (label, action) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; b.onclick = action; return b; };
   const source = () => ({kind:"page", mediaId, page, startChar:[...editor.value.slice(0, editor.selectionStart)].length, ...(editor.selectionEnd > editor.selectionStart ? {endChar:[...editor.value.slice(0, editor.selectionEnd)].length} : {startChar:0})});
@@ -148,38 +148,60 @@ function pageReview(mediaId, page, pre, transcript) {
   include.onchange = () => include.checked ? aiSelections.set(`${mediaId}:${page}`, {kind:"page", mediaId, page}) : aiSelections.delete(`${mediaId}:${page}`);
   controls.append(include, document.createTextNode("회의 요약에 이 페이지 포함"));
   controls.append(button("수정 저장", async () => {
-    try { const r = await api(`/api/media/${mediaId}/pages/${page}`, "PATCH", {version:transcript.version || 1, text:editor.value, language:language.value}); Object.assign(transcript, r); pre.textContent = editor.value; for (const old of pre.parentElement.querySelectorAll(".translation")) old.remove(); document.dispatchEvent(new CustomEvent("source:updated", {detail:{mediaId}})); toast("저장했습니다."); }
-    catch (e) { toast(e.code || t("failed")); }
+    try {
+      const r = await api(`/api/media/${mediaId}/pages/${page}`, "PATCH", {version:transcript.version || 1, text:editor.value, language:language.value});
+      if (!active()) return;
+      if (onCorrect) onCorrect(r);
+      else {
+        Object.assign(transcript, r);
+        pre.textContent = editor.value;
+        for (const old of pre.parentElement.querySelectorAll(".translation")) old.remove();
+      }
+      document.dispatchEvent(new CustomEvent("source:updated", {detail:{mediaId}}));
+      toast("저장했습니다.");
+    } catch (e) { if (active()) toast(e.code || t("failed")); }
   }));
   for (const [label, kind] of [["선택 범위 번역", "translate"], ["선택 범위 요약", "summarize"]]) controls.append(button(label, () => {
     if (editor.value !== transcript.pages[page - 1]) return toast("수정한 원문을 먼저 저장하세요.");
     runAi([source()], kind);
   }));
   controls.append(button("이 언어로 OCR 다시 실행", async () => {
-    try { const state = await api(`/api/media/${mediaId}/process?language=${encodeURIComponent(language.value)}`, "POST"); cards[mediaId]?.(state); toast("OCR 재처리를 요청했습니다. 완료 후 본문을 다시 여세요."); }
-    catch (e) { toast(e.code || t("failed")); }
+    try {
+      const state = await api(`/api/media/${mediaId}/process?language=${encodeURIComponent(language.value)}`, "POST");
+      if (active()) cards[mediaId]?.(state);
+    } catch (e) { if (active()) toast(t("fe_" + e.code) || e.code || t("failed")); }
   }));
   controls.append(button("페이지 이미지·인식 영역 확인", async () => {
-    let url;
+    let dispose;
     const generation = viewGeneration, authToken = token;
     try {
       const response = await fetch(`/api/media/${mediaId}/pages/${page}/image`, {headers:{Authorization:"Bearer " + authToken}});
       if (!response.ok) throw new Error();
       const blob = await response.blob();
-      if (viewGeneration !== generation || token !== authToken) return;
+      if (!active() || viewGeneration !== generation || token !== authToken) return;
       const dialog = document.createElement("dialog"), image = document.createElement("img"), wrap = document.createElement("div");
-      wrap.style.cssText = "position:relative;max-width:80vw"; image.style.width = "100%"; image.src = url = URL.createObjectURL(blob); wrap.append(image);
+      const url = URL.createObjectURL(blob);
+      dispose = () => {
+        imagePreviews.delete(dispose);
+        dialog.onclose = null;
+        if (dialog.open) dialog.close();
+        image.removeAttribute("src");
+        URL.revokeObjectURL(url);
+        dialog.remove();
+      };
+      imagePreviews.set(dispose, mediaId);
+      wrap.style.cssText = "position:relative;max-width:80vw"; image.style.width = "100%"; image.src = url; wrap.append(image);
       for (const region of detail?.regions || []) {
         const xs = region.polygon.map(p=>p[0]), ys = region.polygon.map(p=>p[1]), mark = document.createElement("span");
         mark.title = `${region.text} (${Math.round(region.confidence * 100)}%)`;
         mark.style.cssText = `position:absolute;border:1px solid red;left:${Math.min(...xs)/detail.width*100}%;top:${Math.min(...ys)/detail.height*100}%;width:${(Math.max(...xs)-Math.min(...xs))/detail.width*100}%;height:${(Math.max(...ys)-Math.min(...ys))/detail.height*100}%`;
         wrap.append(mark);
       }
-      dialog.append(wrap, button("닫기", () => dialog.close())); dialog.onclose = () => { URL.revokeObjectURL(url); dialog.remove(); };
+      dialog.append(wrap, button("닫기", () => dialog.close())); dialog.onclose = dispose;
       document.body.append(dialog); dialog.showModal();
-    } catch { if (url) URL.revokeObjectURL(url); toast("이 파일의 페이지 이미지를 열 수 없습니다."); }
+    } catch { dispose?.(); if (active()) toast(t("pdfImageFail")); }
   }));
   const original = button("원문/수정본", () => { pre.textContent = pre.textContent === transcript.pages[page - 1] ? (transcript.originalPages?.[page - 1] ?? transcript.pages[page - 1]) : transcript.pages[page - 1]; });
   controls.append(original);
-  pre.before(controls);
+  return controls;
 }

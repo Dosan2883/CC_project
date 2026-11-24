@@ -36,6 +36,7 @@ $("authForm").onsubmit = async e => {
 };
 async function startSession(tok, nickname) {
   cancelRoomLoads(); cancelApiRequests();
+  clearImagePreviews();
   lastRooms = []; lastPublic = [];
   token = tok; me = nickname; tokenStore.set(tok);
   await languageOptionsReady;
@@ -50,6 +51,7 @@ function logout(expired) {
   resetAiPanel();
   cancelRoomLoads(); cancelApiRequests(); viewGeneration++;
   clearFilePolling();
+  clearImagePreviews();
   closeSocket(); currentRoom = null; token = null; closeDocPanel(); me = null; tokenStore.set(null);
   clearInterval(roomsTimer); lastRooms = []; lastPublic = [];
   renderRooms(); $("roomsRetry").hidden = true;

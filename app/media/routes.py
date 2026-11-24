@@ -198,10 +198,7 @@ def original(media_id: str, user: str = Depends(current_user)):
 
 @router.get("/api/media/{media_id}")
 def media_status(media_id: str, user: str = Depends(current_user)):
-    asset = media_member(media_id, user, allow_deleted=True)
-    if media_svc.is_deleted(asset):  # 채팅의 파일 카드가 삭제된 파일로 표시할 수 있게 상태만 알려 준다
-        return {"mediaId": media_id, "filename": asset["filename"], "kind": asset["type"], "size": asset["size"], "status": "DELETED",
-                "progress": 100, "errorCode": None, "needsOcr": False, "pageCount": 0, "retryCount": 0}
+    media_member(media_id, user, allow_deleted=True)
     return media_svc.status(media_id)
 
 

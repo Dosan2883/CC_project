@@ -75,6 +75,7 @@ window.addEventListener("focus", markVisibleRead);
 function enterRoom(r) {
   if (currentRoom && currentRoom.roomId === r.roomId && ws) { $("app").classList.add("in-room"); return; }
   closeSocket();
+  clearImagePreviews();
   resetAiPanel();
   messageViews.clear(); currentRoom = r; viewGeneration++; closeDocPanel(); lastSeq = 0; retry = 0; prevMsg = null;
   aiSelections.clear();
@@ -103,6 +104,7 @@ function leaveView() {  // 방을 떠나지 않고 화면만 닫는다
   resetAiPanel();
   viewGeneration++;
   clearFilePolling();
+  clearImagePreviews();
   closeSocket(); currentRoom = null; closeDocPanel(); resetParticipants();
   $("chat").style.display = "none"; $("empty").style.display = "grid";
   $("app").classList.remove("in-room"); $("status").textContent = "";

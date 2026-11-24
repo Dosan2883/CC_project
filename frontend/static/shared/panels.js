@@ -65,20 +65,33 @@ async function renameSummary(roomId, entryId, title) {
 
 function renderSummaries(roomId, entries) {
   const box = $("sumView");
+  const generation = summaryGeneration, session = token;
+  const active = () => docOpen && currentRoom?.roomId === roomId && generation === summaryGeneration && session === token;
   box.replaceChildren();
   if (!entries.length) { box.append(el("div", "hint", t("summaryEmpty"))); return; }
   for (const entry of entries) {
     const item = el("div", "sum-item"), act = el("div", "sum-act");
     const detail = el("pre"); detail.hidden = true;
+    const finder = el("div"); finder.hidden = true;
     const view = el("button", null, t("summaryView")); view.type = "button";
     view.onclick = async () => {
-      if (!detail.hidden) { detail.hidden = true; view.textContent = t("summaryView"); return; }
+      if (!detail.hidden) {
+        detail.hidden = finder.hidden = true;
+        finder.replaceChildren();
+        view.textContent = t("summaryView");
+        return;
+      }
       view.disabled = true;
       try {
         const full = await api(`/api/ai/rooms/${roomId}/summaries/${entry.entryId}`);
+        if (!active()) return;
         detail.textContent = full.result.text;  // textContent로 XSS 방지
         detail.hidden = false; view.textContent = t("summaryHide");
-      } catch { toast(t("failed")); }
+        if (!full.stale && full.sources?.length) {
+          addDeadlineFinder(finder, full.sources, () => active() && !detail.hidden);
+          finder.hidden = false;
+        }
+      } catch { if (active()) toast(t("failed")); }
       finally { view.disabled = false; }
     };
     act.append(view);
@@ -97,7 +110,7 @@ function renderSummaries(roomId, entries) {
       };
       act.append(remove);
     }
-    item.append(el("strong", null, entry.title), el("small", null, summaryMeta(entry)), act, detail);
+    item.append(el("strong", null, entry.title), el("small", null, summaryMeta(entry)), act, detail, finder);
     box.append(item);
   }
 }

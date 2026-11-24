@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
+from threading import Barrier
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -100,9 +102,82 @@ class CalendarChecks(unittest.TestCase):
 
     def test_event_limit_per_room(self):
         with patch.object(calendar_service, "MAX_EVENTS", 2):
-            self.add()
-            self.add()
-            self.assertEqual(self.code(self.add, "owner"), "TOO_MANY_EVENTS")
+            self.add(title="회의 1")
+            self.add(title="회의 2")
+            self.assertEqual(self.code(self.calendar.create, "r", "owner", {
+                "title": "회의 3", "date": "2026-11-20",
+            }), "TOO_MANY_EVENTS")
+
+    def test_concurrent_duplicate_creation_reuses_one_event(self):
+        barrier = Barrier(2)
+
+        def create(user, title):
+            barrier.wait(timeout=5)
+            return self.add(user, title=title)
+
+        with ThreadPoolExecutor(2) as pool:
+            first = pool.submit(create, "owner", "Sprint   review")
+            second = pool.submit(create, "guest", " sprint review ")
+            self.assertEqual(first.result(timeout=10)["id"], second.result(timeout=10)["id"])
+        self.assertEqual(len(self.calendar.list("r", "owner")), 1)
+
+    def test_concurrent_creates_compete_for_last_slot(self):
+        barrier = Barrier(2)
+
+        def add(title):
+            barrier.wait(timeout=5)
+            try:
+                self.add(title=title)
+                return "created"
+            except HTTPException as error:
+                return error.detail
+
+        with patch.object(calendar_service, "MAX_EVENTS", 1), ThreadPoolExecutor(2) as pool:
+            self.assertEqual(sorted(pool.map(add, ["회의 A", "회의 B"])), ["TOO_MANY_EVENTS", "created"])
+        self.assertEqual(len(self.calendar.list("r", "owner")), 1)
+
+    def test_deleted_room_cannot_gain_an_event_during_commit(self):
+        commit = self.db.commit
+        deleted = False
+
+        def delete_before_commit(changes):
+            nonlocal deleted
+            if not deleted and any(change.sk.startswith("EVENT#") for change in changes):
+                deleted = True
+                self.rooms.delete("r", "owner")
+            return commit(changes)
+
+        with patch.object(self.db, "commit", side_effect=delete_before_commit):
+            with self.assertRaises(HTTPException) as error:
+                self.add()
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(self.db.query("CALENDAR#r", "EVENT#"), [])
+
+    def test_departed_member_cannot_create_edit_or_delete_during_commit(self):
+        event = self.add("guest")
+        commit = self.db.commit
+        operations = [
+            lambda: self.add("guest", title="새 회의"),
+            lambda: self.calendar.update("r", event["id"], "guest", {"title": "변경"}),
+            lambda: self.calendar.delete("r", event["id"], "guest"),
+        ]
+        for operation in operations:
+            self.rooms.join("r", "guest")
+            left = False
+
+            def leave_before_commit(changes):
+                nonlocal left
+                if not left and any(change.sk.startswith("EVENT#") for change in changes):
+                    left = True
+                    self.rooms.leave("r", "guest")
+                return commit(changes)
+
+            with patch.object(self.db, "commit", side_effect=leave_before_commit):
+                with self.assertRaises(HTTPException) as error:
+                    operation()
+            self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(self.calendar.list("r", "owner")[0]["title"], event["title"])
+        self.assertEqual(len(self.calendar.list("r", "owner")), 1)
 
 
 if __name__ == "__main__":

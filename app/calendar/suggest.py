@@ -7,18 +7,23 @@ JSON으로 돌려주고, 실제 날짜는 이 파일의 코드가 **그 글을 �
 import hashlib
 import json
 import re
-import time
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
 from app.ai.client import TranslationUnavailable
+from app.ai.contract import MODEL_VERSION
+from app.ai.service import split_text
 from app.calendar.service import TIME_PATTERN, clean_date
 from app.media.service import MediaError
 
-CACHE_VERSION = "deadlines-v1"
+CACHE_VERSION = "deadlines-v2"
+CACHE_PARTITION = "CALENDAR_SUGGEST"
 MAX_PROMPT_CHARS = 3900        # Lambda가 받는 글자 수 상한(4000)보다 조금 작게
+MAX_BATCHES = 16
+# Claims are acquired in key order and kept until the batch is processed.
+BATCH_LEASE = MAX_BATCHES * 60
 MAX_ITEMS = 20
 FENCE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 
@@ -123,6 +128,23 @@ def local_date(sent_at_ms, tz_minutes, now):
     return (moment + timedelta(minutes=tz_minutes)).date()
 
 
+def prompt_batches(evidence, bases):
+    current, size, ids = [], 0, set()
+    for item in evidence:
+        source_id = item["id"]
+        header = f"[{source_id}] ({bases[source_id].isoformat()}) "
+        for chunk in split_text(item["text"], 3500):
+            line = header + " ".join(chunk.split())
+            if current and size + 1 + len(line) > MAX_PROMPT_CHARS:
+                yield "\n".join(current), ids
+                current, size, ids = [], 0, set()
+            size += len(line) + bool(current)
+            current.append(line)
+            ids.add(source_id)
+    if current:
+        yield "\n".join(current), ids
+
+
 class DeadlineFinder:
     def __init__(self, db, jobs, translation, translator):
         self.db, self.jobs, self.translation, self.translator = db, jobs, translation, translator
@@ -130,37 +152,73 @@ class DeadlineFinder:
     def suggest(self, room_id, user, sources, tz_minutes=0, consent=False):
         if not consent:
             raise HTTPException(422, "CONSENT_REQUIRED")
+        self.translation.authorize_external(user, room_id)
         try:
             evidence = self.jobs.select(room_id, sources, user)  # 방 구성원 확인과 자료 읽기는 요약과 같은 규칙
         except MediaError as error:
             raise HTTPException(error.status, error.code) from None
         now = datetime.now(timezone.utc)
-        bases, lines = {}, []
-        for item in evidence:
-            bases[item["id"]] = local_date(item.get("sentAt"), tz_minutes, now)
-            lines.append(f"[{item['id']}] ({bases[item['id']].isoformat()}) {' '.join(item['text'].split())}")
-        prompt = "\n".join(lines)
-        if len(prompt) > MAX_PROMPT_CHARS:
+        bases = {item["id"]: local_date(item.get("sentAt"), tz_minutes, now) for item in evidence}
+        batches = list(prompt_batches(evidence, bases))
+        if len(batches) > MAX_BATCHES:
             raise HTTPException(422, "SELECTION_TOO_LONG")
-        key = hashlib.sha256((CACHE_VERSION + "\n" + prompt).encode()).hexdigest()
-        cached = self.db.get("CALENDAR_SUGGEST", key)
-        if cached:  # 같은 자료는 AI를 다시 부르지 않는다
-            return {"suggestions": cached.value["items"], "cached": True}
-        if not self.translator.configured:
-            raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
+        work = {}
+        for prompt, ids in batches:
+            identity = json.dumps([CACHE_VERSION, MODEL_VERSION, room_id, prompt], ensure_ascii=False)
+            key = hashlib.sha256(identity.encode()).hexdigest()
+            work[key] = (prompt, ids)
+        items, cached = self.resolve_batches(room_id, user, work)
         self.translation.authorize_external(user, room_id)
-        reservation = self.translation.reserve(user)  # 번역·요약과 같은 사용자별 호출 한도를 쓴다
+        return {"suggestions": self.resolve(items, bases, evidence), "cached": cached}
+
+    def resolve_batches(self, room_id, user, work):
+        results, claims, unused = {}, {}, []
+        called = False
         try:
-            self.translation.mark_attempted(user, reservation)
-            raw = self.translator.invoke(prompt, "Original", "deadlines")
+            # A common lock order prevents overlapping groups from waiting on each other.
+            for key in sorted(work):
+                row = self.db.get(CACHE_PARTITION, key)
+                cached = row.value.get("items") if row else None
+                if cached is not None:
+                    results[key] = cached
+                    continue
+                lease, saved = self.translation.acquire(
+                    CACHE_PARTITION, key, result_field="items", lease_seconds=BATCH_LEASE,
+                )
+                if lease is None:
+                    results[key] = saved
+                else:
+                    claims[key] = lease
+
+            if claims:
+                if not self.translator.configured:
+                    raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
+                self.translation.authorize_external(user, room_id)
+                unused = self.translation.reserve(user, len(claims), lease_seconds=BATCH_LEASE)
+                for key, (prompt, ids) in work.items():
+                    if key not in claims:
+                        continue
+                    self.translation.authorize_external(user, room_id)
+                    self.translation.mark_attempted(user, [unused[0]])
+                    unused.pop(0)
+                    called = True
+                    parsed = parse_items(self.translator.invoke(prompt, "Original", "deadlines"))
+                    if parsed is None:
+                        raise HTTPException(502, "SUGGEST_FAILED")
+                    results[key] = self.translation.complete(
+                        CACHE_PARTITION, key, "Original", [item for item in parsed if item["source"] in ids],
+                        claims[key], result_field="items",
+                    )
+                    del claims[key]
         except TranslationUnavailable:
             raise HTTPException(502, "SUGGEST_FAILED") from None
-        parsed = parse_items(raw)
-        if parsed is None:  # 읽을 수 없는 응답은 저장하지 않아서 다시 누르면 새로 시도한다
-            raise HTTPException(502, "SUGGEST_FAILED")
-        items = self.resolve(parsed, bases, evidence)
-        self.db.update("CALENDAR_SUGGEST", key, lambda _: {"items": items, "createdAt": int(time.time() * 1000)})
-        return {"suggestions": items, "cached": False}
+        finally:
+            try:
+                self.translation.release(user, unused)
+            finally:
+                for key, lease in claims.items():
+                    self.translation.release_claim(CACHE_PARTITION, key, lease)
+        return [item for key in work for item in results[key]], not called
 
     @staticmethod
     def resolve(items, bases, evidence):

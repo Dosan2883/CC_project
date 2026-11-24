@@ -193,7 +193,9 @@ function addDeadlineFinder(container, sources, active) {
     running = true; button.disabled = true; button.textContent = t("calFinding"); setBusy(button, true);
     results.replaceChildren();
     try {
-      const found = await api(`/api/rooms/${roomId}/events/suggest`, "POST", {sources, consent: true, tzOffsetMinutes: -new Date().getTimezoneOffset()});
+      const found = await api(`/api/rooms/${roomId}/events/suggest`, "POST", {
+        sources, consent: true, tzOffsetMinutes: -new Date().getTimezoneOffset()
+      }, {timeout: 300000});
       if (active()) renderSuggestions(results, roomId, found.suggestions);
     } catch (error) {
       if (active()) results.replaceChildren(calNode("div", "cal-empty", calErrorText(error)));

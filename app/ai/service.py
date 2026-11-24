@@ -200,7 +200,7 @@ class TranslationService:
     def translate_page(self, media_id, page, target, user):
         if getattr(self, "jobs", None):
             try:
-                asset = self.media.asset(media_id)
+                asset = self.media.live_asset(media_id)
                 self.rooms.require_member(asset["roomId"], user)
             except (MediaError, HTTPException):
                 raise HTTPException(404, "MEDIA_NOT_FOUND")
@@ -326,17 +326,17 @@ class TranslationService:
         # 이전 번역 캐시에는 state 필드가 없었다. translated가 있으면 완료로 간주한다.
         return key, (value["translated"] if value and isinstance(value.get("translated"), str) and value["translated"].strip() else None)
 
-    def acquire(self, pk, key):
+    def acquire(self, pk, key, *, result_field="translated", lease_seconds=CLAIM_LEASE):
         """캐시 키를 DB 조건부 업데이트로 선점해 다중 프로세스의 중복 호출을 막는다."""
         token = uuid.uuid4().hex
         now = time.time()
         value = self.db.update(pk, key, lambda current: (
-            current if current and current.get("translated") else
+            current if current and current.get(result_field) is not None else
             current if current and current.get("state") == "IN_PROGRESS" and current.get("leaseUntil", 0) > now else
-            {"state": "IN_PROGRESS", "leaseToken": token, "leaseUntil": now + CLAIM_LEASE, "modelVersion": MODEL_VERSION}
+            {"state": "IN_PROGRESS", "leaseToken": token, "leaseUntil": now + lease_seconds, "modelVersion": MODEL_VERSION}
         ))
-        if value.get("translated"):
-            return None, value["translated"]
+        if value.get(result_field) is not None:
+            return None, value[result_field]
         if value.get("leaseToken") == token:
             return token, None
 
@@ -345,21 +345,21 @@ class TranslationService:
             time.sleep(0.05)
             record = self.db.get(pk, key)
             current = record.value if record else None
-            if current and current.get("translated"):
-                return None, current["translated"]
+            if current and current.get(result_field) is not None:
+                return None, current[result_field]
             if not current or current.get("leaseUntil", 0) <= time.time():
-                return self.acquire(pk, key)
+                return self.acquire(pk, key, result_field=result_field, lease_seconds=lease_seconds)
         raise HTTPException(503, "TRANSLATION_IN_PROGRESS")
 
-    def complete(self, pk, key, target, translated, token):
+    def complete(self, pk, key, target, translated, token, *, result_field="translated"):
         def finish(current):
-            if current and current.get("translated"):
+            if current and current.get(result_field) is not None:
                 return current
             if not current or current.get("leaseToken") != token:
                 raise HTTPException(503, "TRANSLATION_LEASE_LOST")
-            return {"state": "COMPLETED", "translated": translated, "target": target,
+            return {"state": "COMPLETED", result_field: translated, "target": target,
                     "modelVersion": MODEL_VERSION, "createdAt": int(time.time() * 1000)}
-        return self.db.update(pk, key, finish)["translated"]
+        return self.db.update(pk, key, finish)[result_field]
 
     def release_claim(self, pk, key, token):
         def release(value):
@@ -396,7 +396,7 @@ class TranslationService:
             self.release_claim(pk, key, lease)
             raise
 
-    def reserve(self, user, cost=1):
+    def reserve(self, user, cost=1, *, lease_seconds=RESERVATION_LEASE):
         """전체 작업의 한도를 예약한다. 호출을 시작한 조각만 실제 사용량으로 확정한다."""
         if cost <= 0:
             return []
@@ -411,7 +411,7 @@ class TranslationService:
                        (entry.get("state") == "attempted" and entry.get("createdAt", 0) > now - QUOTA_WINDOW)]
             if len(legacy) + len(entries) + cost > self.hourly_limit:
                 raise HTTPException(429, "TRANSLATE_LIMIT")
-            entries.extend({"id": item, "state": "reserved", "createdAt": now, "expiresAt": now + RESERVATION_LEASE} for item in ids)
+            entries.extend({"id": item, "state": "reserved", "createdAt": now, "expiresAt": now + lease_seconds} for item in ids)
             return {"calls": legacy, "entries": entries}
 
         self.db.update("TRANSLATE_QUOTA", user.casefold(), transform)

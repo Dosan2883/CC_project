@@ -2,27 +2,100 @@
 const cards = {};  // mediaId -> 카드를 갱신하는 함수 (WebSocket 이벤트가 호출)
 const filePollers = new Map();
 function clearFilePolling() { for (const timer of filePollers.values()) clearTimeout(timer); filePollers.clear(); }
+const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png"];
+const isImageExt = ext => IMAGE_EXTENSIONS.includes((ext || "").toLowerCase());
+const imagePreviews = new Map();
+function clearImagePreviews(mediaId) {
+  for (const [dispose, id] of imagePreviews) {
+    if (mediaId === undefined || mediaId === id) dispose();
+  }
+}
 const fmtSize = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
-/* 문서 페이지 번역: 서버가 저장된 추출 글자를 직접 읽어 번역한다. */
-function pageTranslateButton(mediaId, page, pre) {
+function imagePreview(m, isCurrent, authToken) {
+  const wrap = el("div", "file-img-wrap"), image = el("img", "file-img");
+  wrap.hidden = true;
+  image.alt = m.filename;
+  image.decoding = "async";
+  wrap.append(image);
+  let attempted = false, disposed = false, url;
+  const controller = new AbortController();
+
+  function clearImage() {
+    image.onload = image.onerror = null;
+    image.removeAttribute("src");
+    wrap.replaceChildren();
+    if (url) URL.revokeObjectURL(url);
+    url = null;
+  }
+
+  function dispose() {
+    disposed = true;
+    controller.abort();
+    clearImage();
+    wrap.hidden = true;
+    imagePreviews.delete(dispose);
+  }
+
+  function fail() {
+    if (disposed || !isCurrent()) return dispose();
+    clearImage();
+    wrap.append(el("div", "file-msg err", t("imageLoadFail")));
+    wrap.hidden = false;
+  }
+
+  async function load() {
+    if (attempted || disposed) return;
+    attempted = true;
+    imagePreviews.set(dispose, m.mediaId);
+    try {
+      const response = await fetch(`/api/media/${m.mediaId}/original`, {
+        headers:{Authorization:"Bearer " + authToken}, cache:"no-store", signal:controller.signal,
+      });
+      if (!response.ok) throw new Error();
+      const blob = await response.blob();
+      if (disposed || !isCurrent()) return dispose();
+      url = URL.createObjectURL(blob);
+      image.onload = () => {
+        if (disposed || !isCurrent()) return dispose();
+        const log = $("log");
+        const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+        wrap.hidden = false;
+        if (atBottom) log.scrollTop = log.scrollHeight;
+      };
+      image.onerror = fail;
+      image.src = url;
+    } catch {
+      fail();
+    }
+  }
+
+  return {wrap, load};
+}
+
+/* 페이지 번역은 서버에 저장된 추출 글자를 사용한다. */
+function pageTranslateButton(mediaId, page, pre, active = () => true) {
   const button = el("button", "page-translate", t("translate")); button.type = "button";
   button.onclick = async () => {
-    const shown = pre.parentElement.querySelector(`.translation[data-page="${page}"]`);
+    if (!active() || button.disabled) return;
+    const shown = pre.parentElement?.querySelector(`.translation[data-page="${page}"]`);
     if (shown) { shown.remove(); button.textContent = t("translate"); return; }  // 다시 누르면 번역을 숨긴다
     const roomId = currentRoom?.roomId, target = targetLang, epoch = itemEpoch(`file:${mediaId}`), generation = viewGeneration, authToken = token;
-    if (!await ensureAiConsent() || currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;
-    button.disabled = true; button.textContent = t("translating"); setBusy(button, true);
+    const current = () => active() && currentRoom?.roomId === roomId && viewGeneration === generation &&
+      token === authToken && epoch === itemEpoch(`file:${mediaId}`);
+    button.disabled = true;
     try {
+      if (!await ensureAiConsent() || !current()) return;
+      button.textContent = t("translating"); setBusy(button, true);
       const result = await api("/api/ai/translate-page", "POST", { mediaId, page, target });
-      if (currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken || epoch !== itemEpoch(`file:${mediaId}`)) return;  // 이전 방·계정의 응답은 폐기
+      if (!current()) return;
       const box = el("div", "translation"); box.dataset.page = String(page);
       box.append(el("small", null, `${t("translated")} · ${LANG_NAMES[target]}`), el("div", null, result.translated));  // textContent로 XSS 방지
       button.after(box);
       button.textContent = t("translateHide");
     } catch (error) {
-      toast(aiErrorText(error.code) || t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail"));
+      if (current()) toast(aiErrorText(error.code) || t(error.code === "PAGE_TOO_LONG" ? "translatePageLong" : translateErrors[error.status] || "translateFail"));
     } finally {
       button.disabled = false; setBusy(button, false);
       if (!button.nextElementSibling?.classList?.contains("translation")) button.textContent = t("translate");
@@ -38,16 +111,31 @@ const audioPlayers = new Set();
 function stopAllAudio() { for (const player of audioPlayers) player.pause(); for (const player of audioPlayers) player.dispose?.(); audioPlayers.clear(); }  // 방을 바꾸거나 나가면 재생을 멈춘다
 
 /* 문서·이미지·영상 본문을 파일 카드 바로 아래 칸에 채운다. 열 때마다 저장된 최신 추출 결과를 읽는다. */
-async function fillDocument(text, mediaId) {
+async function fillDocument(text, mediaId, options) {
   const r = await api(`/api/media/${mediaId}/transcript`);
+  if (options.active()) renderDocument(text, mediaId, r, options);
+}
+
+function renderDocument(text, mediaId, r, {image, active}) {
   text.replaceChildren();
   (r.pages || []).forEach((page, i) => {
     if (r.pages.length > 1) text.append(el("h4", null, `${t("pageN")} ${i + 1}`));
-    const pre = el("pre", null, page || t("emptyText"));
+    const detail = r.pageDetails?.[i];
+    const uncorrectedImage = image && !r.corrections?.[String(i + 1)];
+    const ocrError = uncorrectedImage && detail?.error;
+    const hasText = page?.trim() && !(uncorrectedImage && (ocrError || r.needsOcr));
+    const message = image ? t("fe_" + ocrError) || t("ocrNoText") : t("emptyText");
+    const pre = el("pre", null, hasText ? page : message);
     // 번역 버튼은 본문 위에 둔다. 긴 페이지에서도 스크롤 없이 바로 보이고, 번역은 버튼 아래(원문 위)에 붙는다.
-    if (page && page.trim()) text.append(pageTranslateButton(mediaId, i + 1, pre));
-    text.append(pre);
-    pageReview(mediaId, i + 1, pre, r);
+    if (hasText) text.append(pageTranslateButton(mediaId, i + 1, pre, () => active() && !text.hidden));
+    if (image) {
+      const advanced = el("details", "file-ocr-options");
+      const onCorrect = updated => renderDocument(text, mediaId, updated, {image, active});
+      advanced.append(el("summary", null, t("ocrOptions")), pageReview(mediaId, i + 1, pre, r, {active, onCorrect}));
+      text.append(pre, advanced);
+    } else {
+      text.append(pageReview(mediaId, i + 1, pre, r, {active}), pre);
+    }
   });
   (r.segments || []).forEach(segment => {  // 대사 한 줄마다 시간·글·번역 버튼만 둔다
     const source = {kind:"segment", mediaId, start:segment.start, end:segment.end};
@@ -56,7 +144,7 @@ async function fillDocument(text, mediaId) {
     row.append(el("small", "seg-time", `${segment.start}–${segment.end}초`), el("span", "seg-text", segment.text), translate);
     text.append(row);
   });
-  if (!(r.pages || []).length && !(r.segments || []).length) text.append(el("pre", null, t("emptyText")));  // 말이 없는 음성 등
+  if (!(r.pages || []).length && !(r.segments || []).length) text.append(el("pre", null, t(image ? "ocrNoText" : "emptyText")));
 }
 
 /* 음성: 파일 카드 바로 아래에 재생바와 지금 재생 중인 대사(원문과 번역)만 보여 준다. 번역은 처음 재생할 때 한 번 받는다. */
@@ -131,7 +219,11 @@ function audioInline(mediaId, ext) {
 }
 
 function fileCard(m, sender) {
-  const cardRoomId = currentRoom?.roomId, cardGeneration = viewGeneration;
+  const cardRoomId = currentRoom?.roomId, cardGeneration = viewGeneration, cardToken = token;
+  const image = isImageExt(m.ext);
+  const isCurrent = () => cards[m.mediaId] === update && currentRoom?.roomId === cardRoomId &&
+    viewGeneration === cardGeneration && token === cardToken;
+  const preview = image ? imagePreview(m, isCurrent, cardToken) : null;
   const box = el("div", "file");
   const top = el("div", "file-top");
   const info = el("div", "file-info");
@@ -143,32 +235,95 @@ function fileCard(m, sender) {
   const act = el("div", "file-act");
   const text = el("div", "file-text"); text.hidden = true;  // 문서 본문은 이 칸(파일 카드 바로 아래)에서 본다
   const audioHost = el("div", "audio-host"); audioHost.hidden = true;  // 음성 재생바는 이 칸에 둔다
-  box.append(top, bar, msg, act, audioHost, text);
+  box.append(top);
+  if (preview) box.append(preview.wrap);
+  box.append(bar, msg, act, audioHost, text);
 
-  let loaded = false, audioBuilt = false, pollFailures = 0;
-  const isCurrent = () => cards[m.mediaId] === update && currentRoom?.roomId === cardRoomId && viewGeneration === cardGeneration;
+  let currentStatus, statusRevision = 0, loaded = false, loadingText = false, textRevision = 0;
+  let wantOpenText = false, startingOcr = false, audioBuilt = false, pollFailures = 0;
+  const textButton = el("button", null, t("viewText"));
+  textButton.type = "button";
+  textButton.onclick = toggleText;
+  const busyStatus = status => status === "PENDING" || status === "PROCESSING";
+
   function schedulePoll(delay) {
     clearTimeout(filePollers.get(m.mediaId));
-    filePollers.set(m.mediaId, setTimeout(async () => {
-      if (!isCurrent()) { filePollers.delete(m.mediaId); return; }
-      try {
-        const state = await api(`/api/media/${m.mediaId}`);
-        if (!isCurrent()) return;
-        pollFailures = 0; update(state);
-      } catch (error) {
-        if (!isCurrent() || error.status === 404 || error.status === 403) { filePollers.delete(m.mediaId); return; }
-        pollFailures++;
-        schedulePoll(Math.min(2000 * 2 ** Math.min(pollFailures, 4), 30000));
-      }
-    }, delay));
+    filePollers.set(m.mediaId, setTimeout(refreshStatus, delay));
   }
-  async function toggleText(btn) {
-    if (!text.hidden) { text.hidden = true; btn.textContent = t("viewText"); return; }
-    if (!loaded) {
-      try { await fillDocument(text, m.mediaId); loaded = true; }
-      catch (e) { toast(t("failed")); return; }
+  async function refreshStatus() {
+    if (!isCurrent() || currentStatus === "DELETED") return;
+    const revision = statusRevision;
+    const current = () => isCurrent() && revision === statusRevision;
+    try {
+      const state = await api(`/api/media/${m.mediaId}`);
+      if (!current()) return;
+      pollFailures = 0;
+      update(state);
+    } catch (error) {
+      if (!current()) return;
+      if (error.status === 404 || error.status === 403) return update({status:"DELETED"});
+      pollFailures++;
+      schedulePoll(Math.min(2000 * 2 ** Math.min(pollFailures, 4), 30000));
     }
-    text.hidden = false; btn.textContent = t("hideText");
+  }
+  function syncTextButton() {
+    textButton.textContent = t(text.hidden ? "viewText" : "hideText");
+    textButton.disabled = startingOcr || loadingText;
+  }
+  function invalidateText() {
+    textRevision++;
+    text.hidden = true;
+    loaded = loadingText = false;
+    text.replaceChildren();
+  }
+  async function showText() {
+    if (loadingText) return;
+    if (!loaded) {
+      const revision = ++textRevision;
+      const active = () => isCurrent() && currentStatus === "COMPLETED" && revision === textRevision;
+      loadingText = true;
+      syncTextButton();
+      try {
+        await fillDocument(text, m.mediaId, {image, active});
+        if (!active()) return;
+        loaded = true;
+      } catch (error) {
+        if (active() && (error.status === 404 || error.status === 403)) update({status:"DELETED"});
+        else if (active()) toast(t("failed"));
+        return;
+      } finally {
+        if (active()) { loadingText = false; syncTextButton(); }
+      }
+    }
+    text.hidden = false;
+    syncTextButton();
+  }
+  async function toggleText() {
+    if (!isCurrent() || currentStatus === "DELETED" || textButton.disabled) return;
+    if (!text.hidden) {
+      text.hidden = true;
+      syncTextButton();
+    } else if (currentStatus === "COMPLETED") {
+      await showText();
+    } else if (image && ["UPLOADED", "FAILED"].includes(currentStatus)) {
+      wantOpenText = startingOcr = true;
+      syncTextButton();
+      msg.textContent = t("imageExtracting");
+      const revision = statusRevision;
+      try {
+        const state = await api(`/api/media/${m.mediaId}/process`, "POST");
+        if (isCurrent() && revision === statusRevision) update(state);
+      } catch (error) {
+        if (isCurrent() && revision === statusRevision) {
+          wantOpenText = false;
+          if (error.status === 404 || error.status === 403) update({status:"DELETED"});
+          else msg.textContent = t("fe_" + error.code) || t("failed");
+        }
+      } finally {
+        startingOcr = false;
+        if (isCurrent()) syncTextButton();
+      }
+    }
   }
   async function removeFile(btn) {
     if (!confirm(t("fileDeleteConfirm"))) return;
@@ -180,19 +335,33 @@ function fileCard(m, sender) {
     } catch { toast(t("failed")); btn.disabled = false; }
   }
   function update(s) {
+    if (!isCurrent() || currentStatus === "DELETED") return;
+    statusRevision++;
+    const wasBusy = busyStatus(currentStatus);
+    currentStatus = s.status;
     clearTimeout(filePollers.get(m.mediaId)); filePollers.delete(m.mediaId);
-    if (["PENDING", "PROCESSING", "UPLOADING", "UPLOADED"].includes(s.status)) {
+    const busy = busyStatus(s.status);
+    if (busy || (!image && ["UPLOADING", "UPLOADED"].includes(s.status))) {
       schedulePoll(2000);
     }
+    if (preview && !["UPLOADING", "DELETED"].includes(s.status)) preview.load();
     st.textContent = t("st" + s.status); st.dataset.s = s.status;
-    const busy = s.status === "PENDING" || s.status === "PROCESSING";
     setBusy(st, busy);
-    if (busy) loaded = false;
-    bar.style.display = busy ? "" : "none"; fill.style.width = s.progress + "%";
+    if (busy && !wasBusy) {
+      if (image && (!text.hidden || loadingText)) wantOpenText = true;
+      invalidateText();
+    }
+    if (s.status === "FAILED" || s.status === "DELETED") wantOpenText = false;
+    bar.style.display = busy ? "" : "none"; fill.style.width = (s.progress ?? 0) + "%";
     msg.className = "file-msg"; msg.textContent = "";
     act.replaceChildren();
-    if (s.status === "FAILED") {
+    syncTextButton();
+    if (image && busy) {
+      msg.textContent = t("imageExtracting");
+    } else if (s.status === "FAILED") {
       msg.classList.add("err"); msg.textContent = t("fe_" + s.errorCode) || t("failed");
+    }
+    if (s.status === "FAILED" && !image) {
       const b = el("button", null, t("retry")); b.type = "button";
       b.onclick = async () => {
         b.disabled = true;
@@ -204,9 +373,17 @@ function fileCard(m, sender) {
     } else if (s.status === "PENDING" && s.errorCode === "RETRYING") {
       msg.textContent = t("fe_RETRYING");
     } else if (s.status === "DELETED") {
+      clearImagePreviews(m.mediaId);
       msg.textContent = t("fileDeleted");
-      text.hidden = true; audioHost.hidden = true; audioHost.replaceChildren();
-      stopAllAudio();
+      invalidateText();
+      if (!image) stopAllAudio();
+      audioHost.hidden = true; audioHost.replaceChildren();
+    } else if (image && ["UPLOADED", "FAILED", "COMPLETED"].includes(s.status)) {
+      act.append(textButton);
+      if (s.status === "COMPLETED" && wantOpenText) {
+        wantOpenText = false;
+        showText();
+      }
     } else if (s.status === "COMPLETED") {
       if (s.needsOcr) msg.textContent = t("needsOcrMsg");
       if (m.ext === "pdf") {  // PDF: 원본 보기, 전체 번역, 전체 요약. 모두 떠 있는 창으로 열린다
@@ -217,21 +394,21 @@ function fileCard(m, sender) {
         const all = el("button", null, t("summarizeAll")); all.type = "button";
         all.onclick = () => runAi([{kind: "transcript", mediaId: m.mediaId}], "summarize");  // 구간별이 아니라 음성 전체를 한 번에 요약한다
         act.append(all);
-        const transcript = el("button", null, text.hidden ? t("viewText") : t("hideText")); transcript.type = "button"; transcript.onclick = () => toggleText(transcript); act.append(transcript);
+        act.append(textButton);
       } else {
-        const b = el("button", null, text.hidden ? t("viewText") : t("hideText")); b.type = "button"; b.onclick = () => toggleText(b); act.append(b);
+        act.append(textButton);
       }
-      if (sender && sender === me) {  // 올린 사람만 지울 수 있다
-        const remove = el("button", "danger", t("fileDelete")); remove.type = "button"; remove.onclick = () => removeFile(remove); act.append(remove);
-      }
+    }
+    const canDelete = s.status === "COMPLETED" || (image && !["UPLOADING", "DELETED"].includes(s.status));
+    if (canDelete && sender && sender === me) {
+      const remove = el("button", "danger", t("fileDelete")); remove.type = "button"; remove.onclick = () => removeFile(remove); act.append(remove);
     }
   }
   cards[m.mediaId] = update;
-  update({ status: "PENDING", progress: 0, errorCode: null, needsOcr: false });
+  if (!image) update({status:"PENDING", progress:0});
+  else bar.style.display = "none";
   // 기록에서 다시 불러온 카드도 현재 처리 상태를 보여 준다.
-  api(`/api/media/${m.mediaId}`).then(state => { if (isCurrent()) update(state); }).catch(error => {
-    if (isCurrent() && error.status !== 404 && error.status !== 403) { pollFailures++; schedulePoll(Math.min(2000 * 2 ** Math.min(pollFailures, 4), 30000)); }
-  });
+  refreshStatus();
   return box;
 }
 
@@ -243,11 +420,12 @@ $("attVideoBtn").onclick = () => $("fileInput").click();
 $("fileInput").onchange = async e => {
   const file = e.target.files[0]; e.target.value = "";
   if (!file || !currentRoom) return;
+  const ext = file.name.split(".").pop();
   try {
     const meta = await api("/api/files/upload-url", "POST", { roomId: currentRoom.roomId, filename: file.name, size: file.size });
     const res = await fetch(meta.uploadUrl, { method: meta.method, headers: meta.headers, body: file });
     if (!res.ok) throw Object.assign(new Error(), { code: (await res.json().catch(() => ({}))).detail });
     await api(meta.completeUrl, "POST");
-    await api(`/api/media/${meta.mediaId}/process`, "POST");
+    if (!isImageExt(ext)) await api(`/api/media/${meta.mediaId}/process`, "POST");
   } catch (err) { toast(t(uploadErrors[err.code] || "eUpFail")); }
 };

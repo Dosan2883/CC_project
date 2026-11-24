@@ -115,6 +115,7 @@ class MediaService:
             raise MediaError(403, "NOT_FILE_OWNER")
         self.db.update("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + media_id,
                        lambda value: value or {"mediaId": media_id, "deletedBy": user, "deletedAt": int(time.time() * 1000)})
+        self.emit(asset)
         return {"mediaId": media_id, "status": "DELETED"}
 
     @retry_conflicts
@@ -222,6 +223,8 @@ class MediaService:
         if not record:
             raise MediaError(404, "MEDIA_NOT_FOUND")
         asset = record.value
+        if self.is_deleted(asset):
+            raise MediaError(404, "MEDIA_NOT_FOUND")
         room = self.rooms.record(asset["roomId"])
         if asset["status"] != "UPLOADED":
             raise MediaError(409, "NOT_UPLOADED")
@@ -235,6 +238,7 @@ class MediaService:
                 raise MediaError(422, "INVALID_LANGUAGE")
             job["ocrLanguage"] = language
         self.db.commit([room.change(room.value, check=True), record.change({**asset, "jobId": media_id}),
+                        Change("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + media_id, None, None, check=True),
                         Change("MEDIA_JOBS", media_id, previous.version if previous else None, job)])
         self.emit(asset)
         self.enqueue(media_id)
@@ -242,11 +246,16 @@ class MediaService:
 
     def status(self, media_id):
         asset = self.asset(media_id)
-        record = self.db.get("MEDIA_JOBS", asset.get("jobId", ""))
-        job = record.value if record else {}
+        deleted = self.is_deleted(asset)
+        if deleted:
+            job = {"status":"DELETED", "progress":100}
+        else:
+            record = self.db.get("MEDIA_JOBS", asset.get("jobId", ""))
+            job = record.value if record else {}
         return {"mediaId": media_id, "filename": asset["filename"], "kind": asset["type"], "size": asset["size"],
                 "status": job.get("status", asset["status"]), "progress": job.get("progress", 0), "errorCode": job.get("errorCode"),
-                "needsOcr": asset.get("needsOcr", False), "pageCount": asset.get("pageCount", 0), "retryCount": job.get("retryCount", 0)}
+                "needsOcr": not deleted and asset.get("needsOcr", False), "pageCount": 0 if deleted else asset.get("pageCount", 0),
+                "retryCount": job.get("retryCount", 0)}
 
     def transcript(self, media_id):
         asset = self.asset(media_id)

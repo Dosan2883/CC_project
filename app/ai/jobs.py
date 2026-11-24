@@ -105,7 +105,7 @@ class AIJobs:
                 correction = transcript.get("corrections", {}).get(str(source.get("page")), {})
                 details = transcript.get("pageDetails", [])
                 detail = details[source["page"]-1] if source.get("page") and len(details) >= source["page"] else {}
-                item = {"text": text, "source": source, "version": transcript.get("version", 1),
+                item = {"text": text, "sentAt": asset.get("createdAt"), "source": source, "version": transcript.get("version", 1),
                         "sourceLanguage":correction.get("language") or detail.get("language") or transcript.get("language", "und")}
             start, end = source.get("startChar", 0), source.get("endChar")
             if start < 0 or start > len(item["text"]) or (end is not None and not start < end <= len(item["text"])):
@@ -122,8 +122,16 @@ class AIJobs:
         return evidence
 
     @staticmethod
+    def hashable_evidence(item):
+        # Upload time is used to resolve calendar dates, not to identify an existing AI result.
+        if item["source"]["kind"] == "message":
+            return item
+        return {key: value for key, value in item.items() if key != "sentAt"}
+
+    @staticmethod
     def digest(evidence):
-        return hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        stable = [AIJobs.hashable_evidence(item) for item in evidence]
+        return hashlib.sha256(json.dumps(stable, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     def submit(self, body, user):
         body = {**body, "sources": sorted([{**s, "startChar":s.get("startChar", 0)} for s in body["sources"]], key=lambda s:json.dumps(s, sort_keys=True))}
@@ -150,7 +158,7 @@ class AIJobs:
         if sum(len(self.piece_texts(body["kind"], e)) for e in evidence) > 16:
             raise HTTPException(422, "TOO_MANY_CHUNKS")
         identity = {"roomId":body["roomId"], "kind":body["kind"], "sourceLanguage":body["sourceLanguage"], "target":body["target"],
-                    "scope": body["sources"], "evidence":[digest(e) for e in evidence],
+                    "scope": body["sources"], "evidence":[digest(self.hashable_evidence(e)) for e in evidence],
                     "modelVersion":MODEL_VERSION, "promptVersion":SUMMARY_CACHE_VERSION}
         job_id = digest(identity)
         result_key = self.result_key(body, job_id)
@@ -337,7 +345,8 @@ class AIJobs:
                 raise
             raw = json.loads(self.media.storage.get(job.value["resultKey"]))
             result, stale = raw.get("result", raw), True
-        return {"entryId":entry_id, "title":job.value.get("title") or self.default_title(job.value), "result":result, "stale":stale}
+        return {"entryId":entry_id, "title":job.value.get("title") or self.default_title(job.value),
+                "result":result, "stale":stale, "sources":job.value.get("sources", [])}
 
     def rename_summary(self, room, entry_id, title, user):
         self.rooms.require_member(room, user)

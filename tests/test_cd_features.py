@@ -169,6 +169,67 @@ class FeatureChecks(unittest.TestCase):
         self.assertEqual(result["pages"], ["hello"])
         self.assertEqual(result["pageDetails"][0]["page"], 1)
 
+    def test_image_preview_then_on_demand_ocr_and_translation(self):
+        from PIL import Image
+        from app.ai.policy import ExternalAIPolicy
+        from app.media import routes
+
+        output = io.BytesIO()
+        Image.new("RGB", (32, 32), "white").save(output, "PNG")
+        data = output.getvalue()
+        upload = self.media.request_upload("r", "owner", "photo.png", len(data))
+        media_id = upload["mediaId"]
+        upload_token = upload["uploadUrl"].split("token=")[1]
+        self.media.receive_upload(media_id, upload_token, data)
+        translation = self.jobs.translation
+        translation.media = self.media
+        translation.policy = ExternalAIPolicy(self.db, self.rooms, daily_limit=10)
+        translation.policy.set_consent("owner", True)
+        self.model.translate = Mock(return_value="Meeting notes")
+
+        def assert_missing(user):
+            operations = [
+                lambda: routes.original(media_id, user),
+                lambda: routes.process_media(media_id, user=user),
+                lambda: routes.media_transcript(media_id, user),
+                lambda: translation.translate_page(media_id, 1, "en", user),
+            ]
+            for operation in operations:
+                with self.assertRaises(HTTPException) as error:
+                    operation()
+                self.assertEqual((error.exception.status_code, error.exception.detail), (404, "MEDIA_NOT_FOUND"))
+
+        with patch.multiple(routes, media_svc=self.media, room_repo=self.rooms), patch.object(
+            self.media, "on_event"
+        ) as notify, patch("app.media.ocr.recognize", return_value={
+            "text": "회의 내용", "language": "ko", "regions": [], "model": "mock",
+        }) as recognize:
+            assert_missing("outsider")
+            preview = routes.original(media_id, "owner")
+            self.assertEqual(preview.body, data)
+            self.assertEqual(preview.headers["content-type"], "image/png")
+            self.assertEqual(preview.headers["cache-control"], "no-store")
+            self.assertEqual(preview.headers["x-content-type-options"], "nosniff")
+            self.assertEqual(routes.media_status(media_id, "owner")["status"], "UPLOADED")
+            self.assertIsNone(self.db.get("MEDIA_JOBS", media_id))
+            recognize.assert_not_called()
+            with self.assertRaises(HTTPException) as error:
+                routes.media_transcript(media_id, "owner")
+            self.assertEqual(error.exception.status_code, 409)
+
+            self.assertEqual(routes.process_media(media_id, user="owner")["status"], "PENDING")
+            self.assertTrue(self.media.work(media_id))
+            self.assertEqual(routes.media_transcript(media_id, "owner")["pages"], ["회의 내용"])
+            self.assertEqual(routes.process_media(media_id, user="owner")["status"], "COMPLETED")
+            recognize.assert_called_once()
+            self.assertEqual(translation.translate_page(media_id, 1, "en", "owner")["translated"], "Meeting notes")
+            self.assertTrue(translation.translate_page(media_id, 1, "en", "owner")["cached"])
+            self.model.translate.assert_called_once_with("회의 내용", "English", "Korean")
+
+            routes.delete_file(media_id, "owner")
+            self.assertEqual(notify.call_args.args[1]["status"], "DELETED")
+            assert_missing("owner")
+
     def test_mixed_pdf_ocr_only_blank_page(self):
         from pypdf import PdfWriter
         output = io.BytesIO()

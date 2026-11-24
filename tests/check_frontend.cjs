@@ -8,14 +8,23 @@ const html = fs.readFileSync(path.join(root, "frontend/index.html"), "utf8");
 class Element {
   constructor() {
     this.style = {}; this.dataset = {}; this.value = ""; this.children = []; this.parentElement = null;
-    this.classList = {add() {}, remove() {}, toggle() {}};
+    this.classList = {add() {}, remove() {}, toggle() {}, contains: name => (this.className || "").split(" ").includes(name)};
     this.scrollHeight = this.scrollTop = this.clientHeight = 0;
   }
   append(...children) { for (const child of children) { if (child && typeof child === "object") child.parentElement = this; this.children.push(child); } }
   appendChild(child) { this.append(child); }
+  add(child) { this.append(child); }
+  get nextElementSibling() { const nodes = this.parentElement?.children; return nodes?.[nodes.indexOf(this) + 1]; }
   replaceChildren(...children) { for (const child of this.children) if (child && typeof child === "object") child.parentElement = null; this.children = []; this.append(...children); }
   after(...nodes) { if (!this.parentElement) return; const parent = this.parentElement; let index = parent.children.indexOf(this); for (const node of nodes) { if (node && typeof node === "object") node.parentElement = parent; parent.children.splice(++index, 0, node); } }
   remove() { if (!this.parentElement) return; const parent = this.parentElement; parent.children = parent.children.filter(child => child !== this); this.parentElement = null; }
+  removeAttribute(name) { delete this[name]; }
+  querySelector(selector) {
+    const match = selector.match(/^\.(\w+)(?:\[data-page="(\d+)"\])?$/);
+    if (!match) return null;
+    return this.children.find(child => child.classList?.contains(match[1]) &&
+      (match[2] == null || String(child.dataset.page) === match[2])) || null;
+  }
   querySelectorAll() { return []; }
   addEventListener() {}
   focus() {}
@@ -39,6 +48,7 @@ class WebSocket {
 }
 const context = vm.createContext({
   AbortController,
+  Option: function (label, value) { this.textContent = label; this.value = value; },
   console, document, navigator: {language: "ko-KR"}, window: {addEventListener() {}},
   location: {protocol: "http:", host: "localhost"}, WebSocket, confirm: () => true,
   sessionStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
@@ -103,6 +113,18 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   const uploadSteps = requests.filter(request => ["/mock-upload", "/api/files/file/complete", "/api/media/file/process"].includes(request.url));
   assert.deepEqual(uploadSteps.map(request => request.url), ["/mock-upload", "/api/files/file/complete", "/api/media/file/process"]);
   assert.equal(uploadSteps[0].headers["If-None-Match"], "*");
+  for (const filename of ["demo.pdf", "demo.docx", "demo.wav", "demo.mp4"]) {
+    const before = requests.length;
+    await elements.get("fileInput").onchange({target: {files: [{name: filename, size: 3}], value: "file"}});
+    assert.deepEqual(requests.slice(before).map(request => request.url),
+      ["/api/files/upload-url", "/mock-upload", "/api/files/file/complete", "/api/media/file/process"]);
+  }
+  for (const filename of ["photo.jpg", "photo.jpeg", "photo.PNG"]) {
+    const before = requests.length;
+    await elements.get("fileInput").onchange({target: {files: [{name: filename, size: 3}], value: "file"}});
+    assert.deepEqual(requests.slice(before).map(request => request.url),
+      ["/api/files/upload-url", "/mock-upload", "/api/files/file/complete"]);
+  }
   await elements.get("deleteRoom").onclick();
   assert.ok(requests.some(request => request.url === "/api/rooms/room" && request.method === "DELETE"));
   evaluate('enterRoom({roomId: "other", name: "Other", createdBy: "someone-else"})');

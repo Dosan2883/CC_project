@@ -1,6 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 import tempfile
+from threading import Barrier
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -10,9 +12,13 @@ import support  # noqa: F401  테스트용 임시 저장소 설정(실제 데이
 from fastapi import HTTPException
 
 from app.ai.client import TranslationUnavailable
+from app.ai.jobs import AIJobs
+from app.ai.service import TranslationService
 from app.calendar.suggest import DeadlineFinder, add_months, local_date, parse_items, resolve_when
-from app.core.database import SQLiteDatabase
-from app.media.service import MediaError
+from app.core.database import Change, SQLiteDatabase
+from app.media.service import MediaError, MediaService
+from app.media.storage import LocalStorage
+from app.rooms.repository import RoomRepository
 
 BASE = date(2026, 11, 18)  # 수요일
 
@@ -115,21 +121,24 @@ class FakeJobs:
         return self.evidence
 
 
-class FakeQuota:
+class FakeQuota(TranslationService):
     def authorize_external(self, user, room):
-        pass
+        if self.policy_error:
+            raise self.policy_error
 
-    def __init__(self, error=None):
-        self.error, self.reserved, self.attempted = error, 0, 0
+    def __init__(self, db):
+        super().__init__(db, None, None)
+        self.error, self.policy_error, self.reserved, self.attempted = None, None, 0, 0
 
-    def reserve(self, user, cost=1):
+    def reserve(self, user, cost=1, **options):
         if self.error:
             raise self.error
-        self.reserved += 1
-        return ["r"]
+        self.reserved += cost
+        return super().reserve(user, cost, **options)
 
     def mark_attempted(self, user, ids):
-        self.attempted += 1
+        self.attempted += len(ids)
+        super().mark_attempted(user, ids)
 
 
 class FakeTranslator:
@@ -152,7 +161,7 @@ class FinderChecks(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.db = SQLiteDatabase(Path(self.temp.name) / "suggest.db")
-        self.quota, self.sources = FakeQuota(), [{"kind": "message", "messageSeq": 1}]
+        self.quota, self.sources = FakeQuota(self.db), [{"kind": "message", "messageSeq": 1}]
         self.reply = json.dumps([{"source": 1, "title": "발표 자료 제출", "when": {"type": "weekday", "weekday": 4, "week": "next"}, "time": "15:00"}], ensure_ascii=False)
 
     def finder(self, evidence=None, reply=None, **kwargs):
@@ -198,7 +207,7 @@ class FinderChecks(unittest.TestCase):
     def test_requests_are_rejected_before_calling_the_ai(self):
         self.assertEqual(self.code(self.finder().suggest, "r", "owner", self.sources, 0, False), (422, "CONSENT_REQUIRED"))
         self.assertEqual(self.jobs.calls, [])  # 동의가 없으면 자료를 읽지도 않는다
-        long_text = [{"id": 1, "text": "가" * 4000, "sentAt": ms(2026, 11, 18)}]
+        long_text = [{"id": i, "text": "가" * 2200, "sentAt": ms(2026, 11, 18)} for i in range(1, 18)]
         self.assertEqual(self.code(self.finder(long_text).suggest, "r", "owner", self.sources, 0, True), (422, "SELECTION_TOO_LONG"))
         self.assertEqual(self.code(self.finder(configured=False).suggest, "r", "owner", self.sources, 0, True), (503, "TRANSLATION_NOT_CONFIGURED"))
         self.assertEqual(self.code(self.finder(jobs_error=MediaError(404, "MEDIA_NOT_FOUND")).suggest, "r", "owner", self.sources, 0, True), (404, "MEDIA_NOT_FOUND"))
@@ -210,8 +219,92 @@ class FinderChecks(unittest.TestCase):
     def test_failures_are_not_cached(self):
         self.assertEqual(self.code(self.finder(fail=True).suggest, "r", "owner", self.sources, 0, True), (502, "SUGGEST_FAILED"))
         self.assertEqual(self.code(self.finder(reply="죄송합니다, 찾지 못했습니다.").suggest, "r", "owner", self.sources, 0, True), (502, "SUGGEST_FAILED"))
-        self.assertEqual(self.db.query("CALENDAR_SUGGEST"), [])  # 실패한 응답은 저장되지 않아 다시 누르면 새로 시도한다
+        self.assertTrue(all("items" not in row.value for row in self.db.query("CALENDAR_SUGGEST")))
         self.assertEqual(self.finder().suggest("r", "owner", self.sources, 0, True)["cached"], False)
+
+    def test_long_selection_batches_and_deduplicates(self):
+        evidence = [{"id": 1, "text": "가" * 3900 + " 내일까지", "sentAt": ms(2026, 11, 18)}]
+        finder = self.finder(evidence)
+        result = finder.suggest("r", "owner", self.sources, consent=True)
+        self.assertEqual(len(result["suggestions"]), 1)
+        self.assertEqual(self.quota.reserved, 2)
+        self.assertEqual(len(self.translator.calls), 2)
+        self.assertTrue(all(len(prompt) <= 3900 and prompt.startswith("[1] (2026-11-18)")
+                            for prompt, _, _ in self.translator.calls))
+        self.assertTrue(finder.suggest("r", "owner", self.sources, consent=True)["cached"])
+
+    def test_partial_failure_releases_unused_quota_and_keeps_completed_batch(self):
+        evidence = [{"id": 1, "text": "가" * 3500 + "나" * 3500 + "다" * 3000, "sentAt": ms(2026, 11, 18)}]
+        finder = self.finder(evidence)
+        self.translator.invoke = Mock(side_effect=[self.reply, TranslationUnavailable("down"), self.reply, self.reply])
+        self.assertEqual(self.code(finder.suggest, "r", "owner", self.sources, 0, True), (502, "SUGGEST_FAILED"))
+        entries = self.db.get("TRANSLATE_QUOTA", "owner").value["entries"]
+        self.assertEqual((self.quota.reserved, self.quota.attempted), (3, 2))
+        self.assertEqual([entry["state"] for entry in entries], ["attempted", "attempted"])
+        finder.suggest("r", "owner", self.sources, consent=True)
+        self.assertEqual((self.quota.reserved, self.translator.invoke.call_count), (5, 4))
+
+    def test_cache_hit_still_checks_account_and_private_room_policy(self):
+        finder = self.finder()
+        finder.suggest("r", "owner", self.sources, consent=True)
+        for code in ("AI_CONSENT_REQUIRED", "AI_PRIVATE_ROOM_DISABLED"):
+            self.quota.policy_error = HTTPException(403, code)
+            self.assertEqual(self.code(finder.suggest, "r", "owner", self.sources, 0, True), (403, code))
+        self.assertEqual(len(self.translator.calls), 1)
+
+    def test_concurrent_requests_share_empty_batch_result(self):
+        finder = self.finder(reply="[]")
+        barrier = Barrier(2)
+
+        def suggest():
+            barrier.wait(timeout=5)
+            return finder.suggest("r", "owner", self.sources, consent=True)["cached"]
+
+        with ThreadPoolExecutor(2) as pool:
+            self.assertEqual(sorted(pool.map(lambda _: suggest(), range(2))), [False, True])
+        self.assertEqual(len(self.translator.calls), 1)
+        self.assertEqual(self.quota.reserved, 1)
+
+    def test_media_relative_date_uses_upload_time_and_summary_exposes_sources(self):
+        rooms = RoomRepository(self.db)
+        rooms.create({"roomId": "r", "createdBy": "owner", "createdAt": 0, "name": "r", "key": "r"})
+        media = MediaService(LocalStorage(Path(self.temp.name)), lambda *args: None, self.db, rooms)
+        uploaded_at = ms(2026, 11, 17, 23, 30)
+        key = "rooms/r/files/f/extracted/1/original.json"
+        media.storage.put(key, json.dumps({
+            "pages": ["내일까지 제출"], "segments": [{"start": 0, "end": 1, "text": "내일까지 제출"}],
+        }).encode())
+        self.db.commit([Change("MEDIA", "ASSET#f", None, {
+            "mediaId": "f", "roomId": "r", "createdAt": uploaded_at, "transcriptKey": key,
+        })])
+        model = Mock(configured=True)
+        model.summarize.return_value = "결정 [1]"
+        model.invoke.return_value = json.dumps([
+            {"source": 1, "title": "제출", "when": {"type": "relative_day", "offset": 1}},
+        ])
+        translation = TranslationService(self.db, rooms, model, media=media)
+        jobs = AIJobs(self.db, rooms, media, translation)
+        finder = DeadlineFinder(self.db, jobs, translation, model)
+        for kind in ("page", "segment", "transcript"):
+            source = {"kind": kind, "mediaId": "f"}
+            if kind == "page":
+                source["page"] = 1
+            if kind == "segment":
+                source.update(start=0, end=1)
+            selected = jobs.select("r", [source], "owner")
+            self.assertEqual(selected[0]["sentAt"], uploaded_at)
+            result = finder.suggest("r", "owner", [source], 540, True)
+            self.assertEqual(result["suggestions"][0]["date"], "2026-11-19")
+
+        source = {"kind": "page", "mediaId": "f", "page": 1, "startChar": 0}
+        body = {"roomId": "r", "kind": "summarize", "sources": [source], "target": "ko",
+                "sourceLanguage": "auto", "consent": True}
+        job = jobs.submit(body, "owner")
+        self.assertTrue(jobs.work(job["jobId"]))
+        self.assertEqual(jobs.read_summary("r", job["jobId"], "owner")["sources"], [source])
+        original = jobs.select("r", [source], "owner")
+        legacy = [{key: value for key, value in item.items() if key != "sentAt"} for item in original]
+        self.assertEqual(jobs.digest(original), jobs.digest(legacy))
 
     def test_empty_result_is_cached_as_no_events(self):
         finder = self.finder(reply="[]")

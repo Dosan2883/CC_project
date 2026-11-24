@@ -4,6 +4,11 @@
   .file-info { flex:1; min-width:0; }
   .file-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .file-sub { color:var(--muted); font-size:12px; }
+  .file-img-wrap { max-width:100%; min-width:0; }
+  .file-img-wrap[hidden] { display:none; }
+  .file-img { display:block; max-width:100%; max-height:320px; width:auto; height:auto; border-radius:10px; object-fit:contain; }
+  .file-ocr-options { margin-top:8px; }
+  .file-ocr-options summary { cursor:pointer; color:var(--muted); }
   .st { font-size:11px; border-radius:999px; padding:1px 8px; border:1px solid var(--line); color:var(--muted); flex:none; }
   .st[data-s="PROCESSING"], .st[data-s="PENDING"] { color:var(--accent); border-color:var(--accent); }
   .st[data-s="COMPLETED"] { color:#16a34a; border-color:#16a34a; }
