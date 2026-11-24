@@ -17,35 +17,100 @@
 <body>
 
 <div id="login">
-  <div class="logo"><div class="mark">A</div><span id="loginTitle"></span></div>
-  <div class="tabs">
-    <button type="button" id="tabLogin" class="on" data-i="login"></button>
-    <button type="button" id="tabSignup" data-i="signup"></button>
-  </div>
-  <form id="authForm" class="form">
-    <label><span data-i="nickname"></span><input id="user" maxlength="20" autocomplete="username" required></label>
-    <label><span data-i="password"></span><input id="authPw" type="password" maxlength="64" autocomplete="current-password" required></label>
-    <label id="pw2Wrap" style="display:none"><span data-i="passwordConfirm"></span><input id="authPw2" type="password" maxlength="64" autocomplete="new-password"></label>
-    <div id="nickHint" class="hint-small" style="display:none" data-i="nickHint"></div>
-    <label><span data-i="ui"></span>
+  <header class="land-nav">
+    <div class="land-logo">
+      <img class="mark-logo" src="/static/shared/logo.png" alt="">
+      <span id="loginTitle"></span>
+    </div>
+    <nav class="land-links">
+      <div class="land-item" tabindex="0">
+        <span class="land-link" data-i="navFeatures"></span>
+        <div class="land-pop"><ul class="land-card land-list">
+          <li data-i="featChat"></li>
+          <li data-i="featTranslate"></li>
+          <li data-i="featSummary"></li>
+          <li data-i="featFiles"></li>
+          <li data-i="featCalendar"></li>
+        </ul></div>
+      </div>
+      <div class="land-item" tabindex="0">
+        <span class="land-link" data-i="navSecurity"></span>
+        <div class="land-pop"><ul class="land-card land-list">
+          <li data-i="secJwt"></li>
+          <li data-i="secPassword"></li>
+          <li data-i="secThrottle"></li>
+          <li data-i="secAccess"></li>
+          <li data-i="secFiles"></li>
+          <li data-i="secXss"></li>
+          <li data-i="secAI"></li>
+        </ul></div>
+      </div>
+      <div class="land-item" tabindex="0">
+        <span class="land-link" data-i="navDevelopers"></span>
+        <div class="land-pop"><p class="land-card land-card-small" data-i="devInfo"></p></div>
+      </div>
+    </nav>
+    <label class="land-lang"><span data-i="ui"></span>
       <select id="uiLocale"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option></select></label>
-    <div id="authErr"></div>
-    <button class="primary" id="authSubmit"></button>
-  </form>
+  </header>
+  <section class="land-hero">
+    <div class="land-copy">
+      <h1 data-i="landTitle"></h1>
+      <p class="land-desc" data-i="landDesc"></p>
+      <div class="land-tabs">
+        <button type="button" id="tabLogin" class="on" data-i="login"></button>
+        <button type="button" id="tabSignup" data-i="signup"></button>
+      </div>
+      <form id="authForm" class="form">
+        <label><span data-i="nickname"></span><input id="user" maxlength="20" autocomplete="username" required></label>
+        <label><span data-i="password"></span><input id="authPw" type="password" maxlength="64" autocomplete="current-password" required></label>
+        <label id="pw2Wrap" style="display:none"><span data-i="passwordConfirm"></span><input id="authPw2" type="password" maxlength="64" autocomplete="new-password"></label>
+        <div id="nickHint" class="hint-small" style="display:none" data-i="nickHint"></div>
+        <div id="authErr"></div>
+        <button class="primary" id="authSubmit"></button>
+      </form>
+    </div>
+    <div class="land-art" aria-hidden="true">
+      <div class="land-sticker">🌐</div>
+      <div class="phone back">
+        <div class="p-time">9:41</div>
+        <div class="p-title">Messages</div>
+        <div class="p-row"><i class="av a1">K</i><div><b>김민수</b><small>안녕하세요!</small></div></div>
+        <div class="p-row"><i class="av a2">Y</i><div><b>Yamada</b><small>こんにちは！</small></div></div>
+        <div class="p-row"><i class="av a3">A</i><div><b>Alice</b><small>Hello there!</small></div></div>
+        <div class="p-row"><i class="av a4">M</i><div><b>Maria</b><small>¡Hola!</small></div></div>
+      </div>
+      <div class="phone front">
+        <div class="p-time">9:41</div>
+        <div class="p-title">Team Room</div>
+        <div class="p-msg in">안녕하세요! 👋<small>Hello! 👋</small></div>
+        <div class="p-msg out">I'll send the slides by Friday<small>금요일까지 자료 보낼게요</small></div>
+        <div class="p-msg wave"><span class="p-play">▶</span><span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><small>0:24</small></div>
+        <div class="p-chip">📅 11/27 · 발표 자료 제출</div>
+      </div>
+    </div>
+  </section>
 </div>
 
 <div id="app">
+  <nav id="rail">
+    <img class="mark-logo" src="/static/shared/logo.png" alt="">
+    <button type="button" id="railChats" class="rail-btn on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg></button>
+    <button type="button" id="railCal" class="rail-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M8 3v4M16 3v4"/></svg></button>
+    <button type="button" id="railPrefs" class="rail-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button>
+    <span class="rail-gap"></span>
+    <button type="button" id="railLogout" class="rail-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8"/><path d="M6.4 7.4a7.5 7.5 0 1 0 11.2 0"/></svg></button>
+    <div id="railMe" class="av"></div>
+  </nav>
   <aside>
-    <div class="brand"><div class="mark">A</div><strong id="title"></strong><button type="button" id="sideFold" class="ghost fold-btn">←</button></div>
-    <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
+    <div class="brand"><img class="mark-logo" src="/static/shared/logo.png" alt=""><strong id="title"></strong><button type="button" id="sideFold" class="ghost fold-btn">←</button></div>
+    <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="sideCal" class="ghost" data-i="calendar" style="padding:2px 10px;font-size:12px"></button><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
     <details id="preferencesPanel">
       <summary data-i="languageSettings"></summary>
       <div class="form">
         <label><span data-i="ui"></span><select id="prefUiLocale"></select></label>
         <label><span data-i="srcLang"></span><select id="prefSource"></select></label>
         <label><span data-i="target"></span><select id="prefTarget"></select></label>
-        <label><span data-i="subtitleLanguage"></span><select id="prefSubtitle"></select></label>
-        <label><input type="checkbox" id="prefAiConsent"><span data-i="aiConsentSetting"></span></label>
       </div>
     </details>
     <div class="tabs">
@@ -93,13 +158,13 @@
           <div id="members"></div>
         </div>
         <span id="status"></span>
+        <label class="tl"><span data-i="target"></span><select id="tgtLang"></select></label>
         <button type="button" id="roomSummary" class="ghost" data-i="roomSummary" aria-expanded="false"></button>
         <button type="button" id="calendarBtn" class="ghost" data-i="calendar"></button>
         <details id="roomMenu" class="room-menu">
           <summary id="roomMenuButton" class="ghost">⚙</summary>
           <div class="room-menu-list">
             <button type="button" id="participants" class="ghost"></button>
-            <label class="tl"><span data-i="target"></span><select id="tgtLang"></select></label>
             <hr class="menu-sep">
             <button type="button" id="leave" class="ghost danger" data-i="leave"></button>
             <button type="button" id="deleteRoom" class="ghost danger" data-i="deleteRoom" hidden></button>
@@ -124,6 +189,18 @@
       </form>
     </section>
   </main>
+
+  <div id="info">
+    <div class="info-head"><strong data-i="detailInfo"></strong></div>
+    <section class="info-sec">
+      <h3><span data-i="participants"></span> <span id="infoCount"></span></h3>
+      <div id="infoMembers"></div>
+    </section>
+    <section class="info-sec">
+      <h3 data-i="roomAbout"></h3>
+      <p id="infoAbout"></p>
+    </section>
+  </div>
 
   <div id="docPanel" inert>
     <div class="doc-main">

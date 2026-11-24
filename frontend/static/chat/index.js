@@ -160,7 +160,6 @@ function connect() {
     if (d.type === "message:updated") { messageViews.get(d.messageSeq)?.(d); refreshSummaries(); }
     else if (d.type === "source:updated") { document.dispatchEvent(new CustomEvent("source:updated", {detail:d})); refreshSummaries(); }
     else if (d.type === "ai:updated") refreshSummaries();
-    else if (d.type === "calendar:changed") { if (typeof refreshCalendar === "function") refreshCalendar(); }  // 다른 사람이 일정을 바꿨다
     else if (d.type === "message:new") { if (d.messageSeq > lastSeq) { lastSeq = d.messageSeq; addMessage(d); markVisibleRead(); } }
     else if (d.type === "message:ack") acknowledgeMessage(d.clientMessageId);
     else if (d.type === "media:update" || d.type === "media:ready") { if (cards[d.mediaId]) cards[d.mediaId](d); }
@@ -208,7 +207,8 @@ function addMessage(m) {
   const body = document.createElement("div"); body.className = "body";
   const meta = document.createElement("div"); meta.className = "meta";
   const time = new Date(m.sentAt).toLocaleTimeString(locale, { hour:"2-digit", minute:"2-digit" });
-  meta.append(document.createTextNode(mine ? time : `${m.sender} · ${time}`));
+  const senderName = document.createElement("strong"); senderName.textContent = m.sender;  // textContent로 XSS 방지
+  meta.append(senderName, document.createTextNode(time));
   const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = m.sourceLanguage;
   if (!m.media) meta.append(badge);
   const bubble = m.media ? fileCard(m.media, m.sender) : Object.assign(document.createElement("div"), { className: "bubble", textContent: m.bodyCurrent ?? m.bodyOriginal });  // 원문 그대로 표시

@@ -45,6 +45,7 @@ async function startSession(tok, nickname) {
   applyPreferences(saved);
   $("login").style.display = "none"; $("app").style.display = "grid";
   $("who").textContent = me;
+  $("railMe").textContent = initial(me); $("railMe").style.background = color(me);
   clearInterval(roomsTimer); loadRooms(); roomsTimer = setInterval(loadRooms, 3000);
 }
 function logout(expired) {

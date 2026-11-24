@@ -5,7 +5,8 @@ let participantList = [];    // 방의 모든 참여자 [{user, role, lastReadSe
 let participantsWin = null;
 
 function resetParticipants() {  // 방을 바꾸거나 나갈 때
-  onlineUsers = []; participantList = [];
+  onlineUsers = []; participantList = []; participantsAgain = false;
+  $("infoMembers").replaceChildren(); $("infoCount").textContent = ""; $("infoAbout").textContent = "";
   $("participants").textContent = t("participants");
   if (participantsWin) { participantsWin.close(); participantsWin = null; }
 }
@@ -13,10 +14,14 @@ function resetParticipants() {  // 방을 바꾸거나 나갈 때
 function setOnlineUsers(users) {
   onlineUsers = users || [];
   renderParticipants();
+  loadParticipants();  // 들어오고 나간 사람이 상세 정보 목록에도 바로 반영된다
 }
 
+let participantsLoading = false, participantsAgain = false;  // 접속 알림이 연달아 와도 목록 요청은 한 번에 하나만 보내고, 그 사이 온 알림은 끝난 뒤 한 번 더 읽는다
 async function loadParticipants() {
   if (!currentRoom) return;
+  if (participantsLoading) { participantsAgain = true; return; }
+  participantsLoading = true;
   const roomId = currentRoom.roomId, generation = viewGeneration, authToken = token;
   try {
     const members = await api(`/api/rooms/${roomId}/members`);
@@ -24,12 +29,17 @@ async function loadParticipants() {
     participantList = members;
     renderParticipants();
   } catch { /* 목록을 못 받아도 채팅에는 영향이 없다. 다음 갱신 때 다시 시도한다 */ }
+  finally {
+    participantsLoading = false;
+    if (participantsAgain) { participantsAgain = false; loadParticipants(); }
+  }
 }
 
 function renderParticipants() {
   const online = new Set(onlineUsers.map(user => String(user).toLowerCase()));
   const isOnline = member => online.has(member.user.toLowerCase());
   $("participants").textContent = `${t("participants")} (${participantList.length})`;
+  renderInfoPanel(isOnline);
   if (!participantsWin || !participantsWin.open) return;
   const onlineCount = participantList.filter(isOnline).length;
   participantsWin.title.textContent = `${t("participants")} ${participantList.length} · ${t("online")} ${onlineCount}`;
@@ -43,6 +53,19 @@ function renderParticipants() {
     if (member.role === "owner") row.append(el("span", "part-role", t("participantOwner")));
     return row;
   }) : [el("div", "hint", t("participantEmpty"))]));
+}
+
+function renderInfoPanel(isOnline) {  // 오른쪽 상세 정보: 참여자(접속 중인 사람이 위)와 방 정보
+  $("infoCount").textContent = participantList.length ? `${participantList.length} · ${t("online")} ${participantList.filter(isOnline).length}` : "";
+  const rows = [...participantList].sort((a, b) => (b.role === "owner") - (a.role === "owner") || isOnline(b) - isOnline(a) || a.user.localeCompare(b.user));
+  $("infoMembers").replaceChildren(...rows.map(member => {
+    const row = el("div", "info-row"), av = el("div", isOnline(member) ? "av on" : "av", initial(member.user));
+    av.style.background = color(member.user);
+    row.append(av, el("span", "part-name", member.user + (member.user === me ? ` (${t("participantMe")})` : "")));  // textContent로 XSS 방지
+    if (member.role === "owner") row.append(el("span", "part-role", t("participantOwner")));
+    return row;
+  }));
+  if (currentRoom) $("infoAbout").textContent = t(currentRoom.visibility === "private" ? "vPrivate" : "vPublic");
 }
 
 function toggleParticipants() {

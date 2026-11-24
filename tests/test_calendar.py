@@ -9,7 +9,7 @@ import support  # noqa: F401  테스트용 임시 저장소 설정(실제 데이
 from fastapi import HTTPException
 
 from app.calendar import service as calendar_service
-from app.calendar.service import CalendarService
+from app.calendar.service import CalendarService, PersonalCalendarService
 from app.core.database import SQLiteDatabase
 from app.rooms.repository import RoomRepository
 
@@ -178,6 +178,71 @@ class CalendarChecks(unittest.TestCase):
             self.assertEqual(error.exception.status_code, 403)
         self.assertEqual(self.calendar.list("r", "owner")[0]["title"], event["title"])
         self.assertEqual(len(self.calendar.list("r", "owner")), 1)
+
+
+class PersonalCalendarChecks(unittest.TestCase):
+    """개인 캘린더: 사용자마다 따로 저장되고 남에게 보이지 않는다."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.db = SQLiteDatabase(Path(self.temp.name) / "personal.db")
+        self.calendar = PersonalCalendarService(self.db)
+
+    def body(self, **fields):
+        return {"title": "병원", "date": "2026-11-20", "time": "", "note": "", **fields}
+
+    def code(self, call, *args):
+        with self.assertRaises(HTTPException) as error:
+            call(*args)
+        return error.exception.detail
+
+    def test_each_user_sees_only_own_events(self):
+        self.calendar.create("alice", self.body(title="앨리스 일정"))
+        self.calendar.create("bob", self.body(title="밥 일정"))
+        self.assertEqual([e["title"] for e in self.calendar.list("alice")], ["앨리스 일정"])
+        self.assertEqual([e["title"] for e in self.calendar.list("bob")], ["밥 일정"])
+        self.assertEqual(self.calendar.list("carol"), [])
+
+    def test_nickname_case_does_not_split_calendar(self):
+        self.calendar.create("Alice", self.body())
+        self.assertEqual(len(self.calendar.list("alice")), 1)
+
+    def test_cannot_edit_or_delete_another_users_event(self):
+        event = self.calendar.create("alice", self.body())
+        self.assertEqual(self.code(self.calendar.update, event["id"], "bob", {"title": "해킹"}), "EVENT_NOT_FOUND")
+        self.assertEqual(self.code(self.calendar.delete, event["id"], "bob"), "EVENT_NOT_FOUND")
+        self.assertEqual(self.calendar.list("alice")[0]["title"], "병원")
+
+    def test_update_delete_and_validation(self):
+        event = self.calendar.create("alice", self.body())
+        changed = self.calendar.update(event["id"], "alice", {"title": "치과", "time": "09:30"})
+        self.assertEqual((changed["title"], changed["time"], changed["canEdit"]), ("치과", "09:30", True))
+        self.assertEqual(self.code(self.calendar.update, event["id"], "alice", {"date": "2026-13-40"}), "INVALID_DATE")
+        self.assertEqual(self.code(self.calendar.create, "alice", self.body(title="  ")), "TITLE_REQUIRED")
+        self.calendar.delete(event["id"], "alice")
+        self.assertEqual(self.calendar.list("alice"), [])
+
+    def test_duplicate_returns_existing_and_sorted_by_date(self):
+        first = self.calendar.create("alice", self.body(date="2026-11-22"))
+        _, created = self.calendar.create_with_status("alice", self.body(date="2026-11-22"))
+        self.assertFalse(created)
+        self.calendar.create("alice", self.body(title="먼저", date="2026-11-21"))
+        self.assertEqual([e["date"] for e in self.calendar.list("alice")], ["2026-11-21", "2026-11-22"])
+        self.assertEqual(self.calendar.list("alice", "2026-12"), [])
+        self.assertEqual(first["canEdit"], True)
+
+    def test_room_tag_is_stored_cleared_and_validated(self):
+        event = self.calendar.create("alice", self.body(roomId="r1", roomName="  버그   제보방 "))
+        self.assertEqual((event["roomId"], event["roomName"]), ("r1", "버그 제보방"))
+        moved = self.calendar.update(event["id"], "alice", {"roomId": "r2", "roomName": "디자인방"})
+        self.assertEqual((moved["roomId"], moved["roomName"]), ("r2", "디자인방"))
+        untouched = self.calendar.update(event["id"], "alice", {"title": "이름만 변경"})
+        self.assertEqual(untouched["roomId"], "r2")  # 방 표시를 보내지 않으면 그대로 둔다
+        cleared = self.calendar.update(event["id"], "alice", {"roomId": ""})
+        self.assertEqual((cleared["roomId"], cleared["roomName"]), ("", ""))
+        self.assertEqual(self.calendar.create("alice", self.body(title="태그 없음"))["roomId"], "")
+        self.assertEqual(self.code(self.calendar.create, "alice", self.body(title="긴 방", roomId="r", roomName="가" * 41)), "INVALID_ROOM")
 
 
 if __name__ == "__main__":

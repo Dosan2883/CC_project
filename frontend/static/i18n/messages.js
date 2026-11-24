@@ -1,6 +1,6 @@
 // UI 표시 언어(i18n 리소스). AI API를 쓰지 않는다.
 const I18N = {
-  ko: { title:"AI 협업 메신저", loginTitle:"AI 협업 메신저 (데모)", nickname:"닉네임", ui:"앱 표시 언어", send:"보내기",
+  ko: { title:"AI 협업 메신저", loginTitle:"AI 협업 메신저 (데모)", detailInfo:"상세 정보", calMine:"내 캘린더", calNoRoom:"관련 방 없음", calRoomTitle:"관련 방(색으로 구분돼요)", calPrivateHint:"나만 볼 수 있는 개인 캘린더예요. 원하는 일정만 직접 등록하세요.",roomAbout:"방 정보", landTitle:"언어의 벽 없이 대화하는 곳", landDesc:"이곳에 서비스 소개 문구가 들어갑니다. 번역과 요약, 일정까지 한곳에서 함께하세요.", navFeatures:"기능", navSecurity:"보안", navDevelopers:"개발자", featChat:"실시간 채팅 — 공개·비공개 방, 참여자 목록, 읽음 표시", featTranslate:"번역 — 메시지와 문서를 한국어·영어·일본어·중국어·스페인어·프랑스어로", featSummary:"회의 요약 — 선택한 메시지와 자료를 요약하고 원문 근거를 함께 표시", featFiles:"파일 — PDF·문서·이미지 속 글자(OCR) 추출, 음성·영상 받아쓰기와 다국어 자막", featCalendar:"캘린더 — 방 일정 공유, 요약에서 마감 일정을 찾아 추가", secJwt:"로그인 — 서명된 JWT(HS256) 토큰, 7일 뒤 만료", secPassword:"비밀번호 — 솔트를 더한 PBKDF2-SHA256 해시로만 저장(원문은 저장하지 않음)", secThrottle:"무차별 대입 방지 — 로그인·비공개 방 비밀번호 입력은 1분에 5회까지", secAccess:"접근 통제 — 모든 요청에서 방 구성원 확인, WebSocket은 연결 직후 먼저 인증", secFiles:"파일 — 종류·내용 검사, 크기 제한, 일회용 업로드 주소, 1시간 동안만 유효한 서명된 재생 주소", secXss:"화면 — 받은 글은 문자로만 표시해 스크립트가 실행되지 않음", secAI:"외부 AI — 선택한 글만 HTTPS로 전송, 계정 동의와 하루 호출 한도 적용", devInfo:"전북대학교 컴퓨터인공지능학부 학부생", nickname:"닉네임", ui:"앱 표시 언어", send:"보내기",
         roomName:"채팅방 이름", create:"입장", roomList:"내 채팅방",
         noRooms:"아직 들어간 채팅방이 없습니다.\n이름을 입력해 입장하세요.", memberUnit:"명", onlineUnit:"명 접속", back:"← 목록", leave:"나가기",
         pickTitle:"채팅방을 선택하세요", pickDesc:"같은 이름을 입력한 사람끼리 같은 방에서 대화합니다.",
@@ -9,8 +9,7 @@ const I18N = {
         confirmLeave:"이 채팅방에서 나갈까요?", failed:"요청에 실패했습니다", srcLang:"메시지 원문 언어",
         translate:"번역", summarize:"요약",
         translating:"번역 중…", translated:"번역", translateHide:"번역 숨기기",
-        translateConsent:"번역·요약·일정 찾기에 선택한 텍스트를 외부 AI 서비스로 전송합니다. 동의는 계정에 저장되며 설정에서 철회할 수 있습니다. 계속할까요?", aiConsentSetting:"외부 AI 텍스트 전송 허용",
-        calErr_DUPLICATE_EVENT:"같은 날짜와 시간에 동일한 일정이 있습니다.", calErr_TRANSLATION_IN_PROGRESS:"같은 자료의 일정을 찾는 중입니다. 잠시 후 다시 시도하세요.",
+calErr_DUPLICATE_EVENT:"같은 날짜와 시간에 동일한 일정이 있습니다.", calErr_TRANSLATION_IN_PROGRESS:"같은 자료의 일정을 찾는 중입니다. 잠시 후 다시 시도하세요.",
         imageLoadFail:"이미지 미리보기를 불러오지 못했습니다.", imageExtracting:"이미지에서 글자를 추출하는 중…",
         ocrNoText:"이미지에서 글자를 찾지 못했습니다.", ocrOptions:"이미지 글자 추출 설정",
         fe_OCR_NOT_INSTALLED:"서버에 이미지 글자 인식 도구가 설치되어 있지 않습니다.", fe_OCR_FAILED:"글자 인식에 실패했습니다. 설정에서 언어를 선택해 다시 시도할 수 있습니다.",
@@ -35,7 +34,7 @@ const I18N = {
         tabCreate:"방 만들기", tabPrivate:"비공개방 입장", vPublic:"공개", vPrivate:"🔒 비공개", makeRoom:"만들기", enterPrivate:"입장",
         pwPlaceholder:"비밀번호 (4자 이상)", pwEnter:"비밀번호", publicRooms:"공개 채팅방", noPublic:"공개 채팅방이 없습니다.", joinBtn:"참가", open:"입장",
         eDup:"이미 있는 채팅방 이름입니다", eBad:"방 이름 또는 비밀번호가 올바르지 않습니다", eMany:"시도가 너무 많습니다. 잠시 후 다시 시도하세요", ePw:"비공개방은 비밀번호를 4자 이상 입력하세요" },
-  en: { title:"AI Collab Messenger", loginTitle:"AI Collab Messenger (demo)", nickname:"Nickname", ui:"App language", send:"Send",
+  en: { title:"AI Collab Messenger", loginTitle:"AI Collab Messenger (demo)", detailInfo:"Details", calMine:"My calendar", calNoRoom:"No related room", calRoomTitle:"Related room (shown as a color)", calPrivateHint:"This is your private calendar. Only you can see it; add just the events you want.",roomAbout:"About this room", landTitle:"Chat without language barriers", landDesc:"Placeholder text for the service introduction goes here. Translation, summaries and calendar in one place.", navFeatures:"Features", navSecurity:"Security", navDevelopers:"Developers", featChat:"Real-time chat — public and private rooms, member list, read receipts", featTranslate:"Translation — messages and documents in Korean, English, Japanese, Chinese, Spanish and French", featSummary:"Meeting summaries — summarize selected messages and files, with the source text shown", featFiles:"Files — text from PDFs, documents and images (OCR), speech-to-text for audio and video with multilingual subtitles", featCalendar:"Calendar — shared room events, find deadlines from a summary and add them", secJwt:"Login — signed JWT (HS256) tokens that expire after 7 days", secPassword:"Passwords — only salted PBKDF2-SHA256 hashes are stored, never the plain text", secThrottle:"Brute-force limits — at most 5 login or room-password attempts per minute", secAccess:"Access control — every request checks room membership; WebSocket connections authenticate first", secFiles:"Files — type and content checks, size limits, one-time upload links, signed playback links valid for 1 hour", secXss:"Display — received text is shown as plain text so scripts cannot run", secAI:"External AI — only the text you select is sent, over HTTPS, with your account consent and a daily call limit", devInfo:"Undergraduate students, Computer Science and Artificial Intelligence, Jeonbuk National University", nickname:"Nickname", ui:"App language", send:"Send",
         roomName:"Room name", create:"Enter", roomList:"My rooms",
         noRooms:"No rooms yet.\nType a room name to enter.", memberUnit:" members", onlineUnit:" online", back:"← Rooms", leave:"Leave",
         pickTitle:"Select a room", pickDesc:"People who type the same room name chat together.",
@@ -44,8 +43,7 @@ const I18N = {
         confirmLeave:"Leave this room?", failed:"Request failed", srcLang:"Message language",
         translate:"Translate", summarize:"Summarize",
         translating:"Translating…", translated:"Translation", translateHide:"Hide translation",
-        translateConsent:"Selected text is sent to an external AI service for translation, summaries, and finding events. Consent is saved to your account and can be withdrawn in settings. Continue?", aiConsentSetting:"Allow text to be sent to external AI",
-        calErr_DUPLICATE_EVENT:"The same event already exists at that date and time.", calErr_TRANSLATION_IN_PROGRESS:"These sources are already being searched. Try again shortly.",
+calErr_DUPLICATE_EVENT:"The same event already exists at that date and time.", calErr_TRANSLATION_IN_PROGRESS:"These sources are already being searched. Try again shortly.",
         imageLoadFail:"Could not load the image preview.", imageExtracting:"Extracting text from the image…",
         ocrNoText:"No text was found in the image.", ocrOptions:"Image text extraction settings",
         fe_OCR_NOT_INSTALLED:"Text recognition software is missing from the server.", fe_OCR_FAILED:"Text recognition failed. Choose a language in settings and try again.",
@@ -70,7 +68,7 @@ const I18N = {
         tabCreate:"Create room", tabPrivate:"Join private", vPublic:"Public", vPrivate:"🔒 Private", makeRoom:"Create", enterPrivate:"Enter",
         pwPlaceholder:"Password (4+ chars)", pwEnter:"Password", publicRooms:"Public rooms", noPublic:"No public rooms.", joinBtn:"Join", open:"Open",
         eDup:"That room name is already taken", eBad:"Invalid room name or password", eMany:"Too many attempts. Try again later", ePw:"Private rooms need a password (4+ chars)" },
-  ja: { title:"AIコラボメッセンジャー", loginTitle:"AIコラボメッセンジャー (デモ)", nickname:"ニックネーム", ui:"表示言語", send:"送信",
+  ja: { title:"AIコラボメッセンジャー", loginTitle:"AIコラボメッセンジャー (デモ)", detailInfo:"詳細情報", calMine:"マイカレンダー", calNoRoom:"関連ルームなし", calRoomTitle:"関連ルーム（色で区別されます）", calPrivateHint:"自分だけが見られる個人カレンダーです。必要な予定だけ登録できます。",roomAbout:"ルーム情報", landTitle:"言葉の壁なく話せる場所", landDesc:"ここにサービス紹介の文が入ります。翻訳・要約・予定をひとつの場所で。", navFeatures:"機能", navSecurity:"セキュリティ", navDevelopers:"開発者", featChat:"リアルタイムチャット — 公開・非公開ルーム、参加者一覧、既読表示", featTranslate:"翻訳 — メッセージと文書を韓国語・英語・日本語・中国語・スペイン語・フランス語に", featSummary:"会議要約 — 選んだメッセージと資料を要約し、根拠となる原文も表示", featFiles:"ファイル — PDF・文書・画像の文字認識（OCR）、音声・動画の文字起こしと多言語字幕", featCalendar:"カレンダー — ルームで予定を共有、要約から締め切りを見つけて追加", secJwt:"ログイン — 署名付きJWT（HS256）トークン、7日で期限切れ", secPassword:"パスワード — ソルト付きPBKDF2-SHA256のハッシュのみ保存し、平文では保存しない", secThrottle:"総当たり対策 — ログインやルームのパスワード入力は1分に5回まで", secAccess:"アクセス制御 — すべてのリクエストでルーム参加者を確認し、WebSocketは接続後に最初に認証", secFiles:"ファイル — 種類と内容の検査、サイズ制限、1回限りのアップロードリンク、1時間有効の署名付き再生リンク", secXss:"表示 — 受け取った文字は文字として表示し、スクリプトが実行されない", secAI:"外部AI — 選んだ文章だけをHTTPSで送信、アカウントの同意と1日の呼び出し上限あり", devInfo:"全北大学 コンピュータ人工知能学部 学部生", nickname:"ニックネーム", ui:"表示言語", send:"送信",
         roomName:"ルーム名", create:"入室", roomList:"参加中のルーム",
         noRooms:"参加中のルームがありません。\nルーム名を入力して入室してください。", memberUnit:"人", onlineUnit:"人接続中", back:"← 一覧", leave:"退出",
         pickTitle:"ルームを選択してください", pickDesc:"同じルーム名を入力した人同士でチャットします。",
@@ -79,8 +77,7 @@ const I18N = {
         confirmLeave:"このルームから退出しますか？", failed:"リクエストに失敗しました", srcLang:"メッセージの言語",
         translate:"翻訳", summarize:"要約",
         translating:"翻訳中…", translated:"翻訳", translateHide:"翻訳を隠す",
-        translateConsent:"翻訳・要約・予定検索のため、選択したテキストを外部のAIサービスに送信します。同意はアカウントに保存され、設定から撤回できます。続行しますか？", aiConsentSetting:"外部AIへのテキスト送信を許可",
-        calErr_DUPLICATE_EVENT:"同じ日時に同じ予定が登録されています。", calErr_TRANSLATION_IN_PROGRESS:"同じ資料から予定を検索中です。しばらくしてからもう一度お試しください。",
+calErr_DUPLICATE_EVENT:"同じ日時に同じ予定が登録されています。", calErr_TRANSLATION_IN_PROGRESS:"同じ資料から予定を検索中です。しばらくしてからもう一度お試しください。",
         imageLoadFail:"画像のプレビューを読み込めませんでした。", imageExtracting:"画像から文字を抽出しています…",
         ocrNoText:"画像から文字を検出できませんでした。", ocrOptions:"画像の文字抽出設定",
         fe_OCR_NOT_INSTALLED:"サーバーに文字認識ソフトウェアがインストールされていません。", fe_OCR_FAILED:"文字認識に失敗しました。設定で言語を選んでから再試行してください。",
@@ -107,6 +104,6 @@ const I18N = {
         eDup:"そのルーム名は既に使われています", eBad:"ルーム名またはパスワードが正しくありません", eMany:"試行回数が多すぎます。しばらくしてからお試しください", ePw:"非公開ルームには4文字以上のパスワードが必要です" },
 };
 const LANG_NAMES = { ko:"한국어", en:"English", ja:"日本語", "zh-CN":"简体中文", es:"Español", fr:"Français" };
-Object.assign(I18N.ko, {languageSettings:"언어 설정", subtitleLanguage:"자막 언어", deleteRoom:"방 삭제", confirmDeleteRoom:"방을 삭제할까요? 참여자는 더 이상 대화와 첨부 파일에 접근할 수 없습니다.", roomDeleted:"방이 삭제되었습니다", read:"읽음", unread:"안 읽음", stCANCELLED:"취소됨"});
-Object.assign(I18N.en, {languageSettings:"Language settings", subtitleLanguage:"Subtitle language", deleteRoom:"Delete room", confirmDeleteRoom:"Delete this room? Members will lose access to its messages and files.", roomDeleted:"The room was deleted", read:"Read", unread:"Unread", stCANCELLED:"Cancelled"});
-Object.assign(I18N.ja, {languageSettings:"言語設定", subtitleLanguage:"字幕の言語", deleteRoom:"ルーム削除", confirmDeleteRoom:"ルームを削除しますか？メンバーはメッセージとファイルにアクセスできなくなります。", roomDeleted:"ルームが削除されました", read:"既読", unread:"未読", stCANCELLED:"キャンセル"});
+Object.assign(I18N.ko, {languageSettings:"언어 설정",deleteRoom:"방 삭제", confirmDeleteRoom:"방을 삭제할까요? 참여자는 더 이상 대화와 첨부 파일에 접근할 수 없습니다.", roomDeleted:"방이 삭제되었습니다", read:"읽음", unread:"안 읽음", stCANCELLED:"취소됨"});
+Object.assign(I18N.en, {languageSettings:"Language settings",deleteRoom:"Delete room", confirmDeleteRoom:"Delete this room? Members will lose access to its messages and files.", roomDeleted:"The room was deleted", read:"Read", unread:"Unread", stCANCELLED:"Cancelled"});
+Object.assign(I18N.ja, {languageSettings:"言語設定",deleteRoom:"ルーム削除", confirmDeleteRoom:"ルームを削除しますか？メンバーはメッセージとファイルにアクセスできなくなります。", roomDeleted:"ルームが削除されました", read:"既読", unread:"未読", stCANCELLED:"キャンセル"});

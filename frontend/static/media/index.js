@@ -155,7 +155,7 @@ function audioInline(mediaId, ext) {
   const language = document.createElement("select"); language.title = "자막 언어";
   language.add(new Option("원어 자막", "original")); language.add(new Option("자막 끄기", "off"));
   for (const code of ["ko", "en", "ja", "zh-CN", "es", "fr"]) language.add(new Option(LANG_NAMES[code] || code, code));
-  language.value = $("prefSubtitle").value || "original";
+  language.value = targetLang || "original";  // 자막은 번역 언어를 따라간다
   const status = el("small", "audio-status"), now = el("div", "audio-now");
   box.append(language, player, now, status);
   let segments = [], urls = [], generation = 0, loaded = false;
