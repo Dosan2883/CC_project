@@ -86,17 +86,13 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   await evaluate('startSession("test-token", "owner")');
   assert.equal(elements.get("srcLang").value, "ja");
   assert.equal(elements.get("tgtLang").value, "fr");
-  assert.equal(elements.get("prefSubtitle").value, "es");
   await evaluate('savePreferences({defaultTargetLanguage: "zh-CN"})');
   assert.equal(elements.get("tgtLang").value, "zh-CN");
   assert.equal(await evaluate("ensureAiConsent()"), true);
-  const consentControl = elements.get("prefAiConsent");
-  assert.equal(consentControl.checked, true);
-  consentControl.checked = false;
-  await consentControl.onchange({target: consentControl});
-  assert.equal(aiConsent, false);
+  assert.equal(aiConsent, true);  // 처음 쓸 때 자동으로 허용이 저장된다
+  assert.equal(await evaluate("ensureAiConsent()"), true);  // 이미 허용이면 다시 저장하지 않는다
   assert.deepEqual(requests.filter(req => req.url === "/api/users/me/ai-consent" && req.method === "PATCH")
-    .map(req => req.body.allowed), [true, false]);
+    .map(req => req.body.allowed), [true]);
   evaluate('enterRoom({roomId: "room", name: "Room", createdBy: "owner", lastReadSeq: 0})');
   await tick();
   assert.equal(elements.get("deleteRoom").hidden, false);

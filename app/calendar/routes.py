@@ -7,12 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.ai.routes import Source
 from app.auth.dependencies import current_user
-from app.calendar.service import CalendarService
+from app.calendar.service import CalendarService, PersonalCalendarService
 from app.calendar.suggest import DeadlineFinder
 from app.core.runtime import ai_jobs, db, manager, room_repo, translation
 
 router = APIRouter()
 service = CalendarService(db, room_repo)
+personal = PersonalCalendarService(db)
 finder = DeadlineFinder(db, ai_jobs, translation, translation.translator)
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,16 @@ class EventPatch(BaseModel):
     date: str | None = None
     time: str | None = None
     note: str | None = None
+
+
+class PersonalBody(EventBody):
+    roomId: str = ""    # 어느 방과 관련된 일정인지(선택). 화면에서 방마다 색을 나누는 데만 쓴다
+    roomName: str = ""
+
+
+class PersonalPatch(EventPatch):
+    roomId: str | None = None
+    roomName: str | None = None
 
 
 class SuggestBody(BaseModel):
@@ -81,3 +92,27 @@ async def delete_event(room_id: str, event_id: str, user: str = Depends(current_
     result = await asyncio.to_thread(service.delete, room_id, event_id, user)
     await announce(room_id, "deleted", event_id, user)
     return result
+
+
+# ---------- 개인 캘린더: 로그인한 본인의 일정만 다룬다(방과 상관없음, 다른 사람에게 보이지 않는다) ----------
+@router.get("/api/calendar/events")
+def list_my_events(month: str | None = None, user: str = Depends(current_user)):
+    return personal.list(user, month)
+
+
+@router.post("/api/calendar/events", status_code=201)
+async def create_my_event(body: PersonalBody, response: Response, user: str = Depends(current_user)):
+    event, created = await asyncio.to_thread(personal.create_with_status, user, body.model_dump())
+    if not created:
+        response.status_code = 200  # 같은 제목·날짜·시간이 이미 있으면 새로 만들지 않고 그것을 돌려준다
+    return event
+
+
+@router.patch("/api/calendar/events/{event_id}")
+async def update_my_event(event_id: str, body: PersonalPatch, user: str = Depends(current_user)):
+    return await asyncio.to_thread(personal.update, event_id, user, body.model_dump(exclude_unset=True))
+
+
+@router.delete("/api/calendar/events/{event_id}")
+async def delete_my_event(event_id: str, user: str = Depends(current_user)):
+    return await asyncio.to_thread(personal.delete, event_id, user)

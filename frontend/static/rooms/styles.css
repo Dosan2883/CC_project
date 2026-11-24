@@ -9,14 +9,15 @@ aside { background:var(--side); border-right:1px solid var(--line); display:flex
   .form { display:grid; gap:8px; }
   .form input { width:100%; }
   .seg { display:flex; gap:6px; }
-  .seg label { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--line); border-radius:10px; padding:7px 8px; cursor:pointer; font-size:13px; background:var(--panel); }
-  .seg label:has(input:checked) { border-color:var(--accent); background:var(--accent-soft); font-weight:600; }
+  .seg label { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; border-radius:8px; padding:7px 8px; cursor:pointer; font-size:13px; background:var(--bubble); }
+  .seg label:hover { text-decoration:underline; text-underline-offset:4px; }
+  .seg label:has(input:checked) { background:var(--accent-soft); color:var(--accent); font-weight:600; }
   .seg input { position:absolute; opacity:0; pointer-events:none; width:0; }
   #rooms, #publicRooms { display:grid; gap:6px; align-content:start; }
   .room button { padding:4px 10px; font-size:12px; flex:none; }
   .room { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:12px; cursor:pointer; border:1px solid transparent; }
   .room:hover { background:var(--accent-soft); }
-  .room.active { background:var(--accent-soft); border-color:var(--accent); }
+  .room.active { background:var(--accent-soft); }
   .room .ic { width:38px; height:38px; border-radius:12px; display:grid; place-items:center; color:#fff; font-weight:700; flex:none; }
   .room .info { flex:1; min-width:0; }
   .room .name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

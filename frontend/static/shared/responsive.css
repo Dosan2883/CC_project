@@ -2,6 +2,7 @@
   @media (max-width:720px) {
     #app { grid-template-columns:minmax(0,1fr); }
     #app > aside, #app > main { grid-column:1; }
+    #rail, #info { display:none; }
     #app.doc-open { --doc-w:0px; }
     #app.side-collapsed:not(.in-room) > aside { display:flex; opacity:1; visibility:visible; pointer-events:auto; }
     #sideFold, .side-open { display:none; }
@@ -18,6 +19,8 @@
     .chat-head .titles { flex:1 1 0; }
     #status { display:none; }
     .room-menu { order:2; }
+    .tl { order:3; flex:1 1 100%; }
+    .tl select { flex:1; }
     .body { max-width:84%; }
     #form { padding:10px 12px; gap:6px; }
     #form select { max-width:92px; padding:8px; }

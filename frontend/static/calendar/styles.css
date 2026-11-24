@@ -4,14 +4,22 @@
   .cal-nav button { padding:3px 10px; }
   .cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px; }
   .cal-dow { text-align:center; font-size:11px; color:var(--muted); padding:2px 0; }
-  .cal-cell { display:flex; flex-direction:column; align-items:center; gap:3px; padding:5px 0 4px; border:1px solid transparent; border-radius:10px; background:transparent; font-size:13px; line-height:1.2; }
+  .cal-cell { display:flex; flex-direction:column; align-items:center; gap:3px; padding:5px 0 4px; border:0; border-radius:10px; background:transparent; font-size:13px; line-height:1.2; }
   .cal-cell:hover { background:var(--bubble); }
   .cal-cell.other { color:var(--muted); opacity:.55; }
-  .cal-cell.today { border-color:var(--accent); }
+  .cal-cell.today { color:var(--accent); font-weight:700; }  /* 오늘은 테두리 대신 파란 굵은 글씨 */
   .cal-cell.selected { background:var(--accent-soft); font-weight:700; }
   .cal-dots { display:flex; gap:2px; min-height:5px; }
   .cal-dots i { width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  .cal-legend { display:flex; flex-wrap:wrap; gap:6px 12px; font-size:12px; color:var(--muted); }
+  .cal-legend:empty { display:none; }
+  .cal-legend-item { display:inline-flex; align-items:center; gap:5px; }
+  .cal-legend-item i { width:9px; height:9px; border-radius:50%; flex:none; }
+  .cal-room-chip { justify-self:start; display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:999px; background:var(--panel); font-size:12px; font-weight:600; }
+  .cal-room-chip i { width:9px; height:9px; border-radius:50%; flex:none; }
+  .cal-room { color:var(--muted); font-size:12px; }
   .cal-day { display:grid; gap:6px; }
+  .cal-form select { width:100%; }
   .cal-day-title { font-size:13px; font-weight:600; }
   .cal-empty { color:var(--muted); font-size:13px; padding:4px 2px; }
   .cal-event { display:grid; gap:3px; padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:var(--bubble); }
