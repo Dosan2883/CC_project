@@ -34,18 +34,6 @@
         </ul></div>
       </div>
       <div class="land-item" tabindex="0">
-        <span class="land-link" data-i="navSecurity"></span>
-        <div class="land-pop"><ul class="land-card land-list">
-          <li data-i="secJwt"></li>
-          <li data-i="secPassword"></li>
-          <li data-i="secThrottle"></li>
-          <li data-i="secAccess"></li>
-          <li data-i="secFiles"></li>
-          <li data-i="secXss"></li>
-          <li data-i="secAI"></li>
-        </ul></div>
-      </div>
-      <div class="land-item" tabindex="0">
         <span class="land-link" data-i="navDevelopers"></span>
         <div class="land-pop"><p class="land-card land-card-small" data-i="devInfo"></p></div>
       </div>
@@ -103,16 +91,8 @@
     <div id="railMe" class="av"></div>
   </nav>
   <aside>
-    <div class="brand"><img class="mark-logo" src="/static/shared/logo.png" alt=""><strong id="title"></strong><button type="button" id="sideFold" class="ghost fold-btn">←</button></div>
-    <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="sideCal" class="ghost" data-i="calendar" style="padding:2px 10px;font-size:12px"></button><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
-    <details id="preferencesPanel">
-      <summary data-i="languageSettings"></summary>
-      <div class="form">
-        <label><span data-i="ui"></span><select id="prefUiLocale"></select></label>
-        <label><span data-i="srcLang"></span><select id="prefSource"></select></label>
-        <label><span data-i="target"></span><select id="prefTarget"></select></label>
-      </div>
-    </details>
+    <div class="brand"><img class="mark-logo" src="/static/shared/logo.png" alt=""><strong id="title"></strong></div>
+    <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="sideCal" class="ghost" data-i="calendar" style="padding:2px 10px;font-size:12px"></button><button type="button" id="sideSettings" class="ghost" data-i="languageSettings" style="padding:2px 10px;font-size:12px"></button><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
     <div class="tabs">
       <button type="button" id="tabCreate" class="on" data-i="tabCreate"></button>
       <button type="button" id="tabPrivate" data-i="tabPrivate"></button>
@@ -160,7 +140,6 @@
         <span id="status"></span>
         <label class="tl"><span data-i="target"></span><select id="tgtLang"></select></label>
         <button type="button" id="roomSummary" class="ghost" data-i="roomSummary" aria-expanded="false"></button>
-        <button type="button" id="calendarBtn" class="ghost" data-i="calendar"></button>
         <details id="roomMenu" class="room-menu">
           <summary id="roomMenuButton" class="ghost">⚙</summary>
           <div class="room-menu-list">
@@ -213,6 +192,13 @@
       <div id="sumView"></div>
     </div>
   </div>
+</div>
+
+<div id="settingsPop" hidden role="dialog" aria-labelledby="settingsTitle">
+  <strong id="settingsTitle" data-i="languageSettings"></strong>
+  <label><span data-i="ui"></span><select id="prefUiLocale"></select></label>
+  <label><span data-i="srcLang"></span><select id="prefSource"></select></label>
+  <label><span data-i="target"></span><select id="prefTarget"></select></label>
 </div>
 
 <div id="toast" role="status"></div>

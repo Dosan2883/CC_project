@@ -12,7 +12,6 @@ function applyPanels() {
   app.classList.toggle("doc-open", open);
   app.classList.toggle("summary-selecting", open);  // 패널이 열려 있는 동안에만 메시지마다 선택 칸이 보인다
   $("sideOpen").hidden = !sideCollapsed;
-  $("sideFold").title = t("sideFold");
   $("sideOpen").title = t("sideOpen");
   $("docPanel").hidden = false;  // 숨김 속성은 쓰지 않는다. 닫힌 패널은 CSS로 서서히 사라지고, 아래 inert로 누르기·탭 이동을 막는다
   $("docPanel").inert = !open;  // 닫혀도 화면에는 남아 있어서 부드럽게 사라진다. 닫힌 동안에는 누르거나 탭으로 갈 수 없다
@@ -130,11 +129,12 @@ async function loadSummaries() {
 function refreshSummaries() { if (docOpen) loadSummaries(); }
 
 /* ---------- 버튼 ---------- */
-$("sideFold").onclick = $("sideOpen").onclick = () => {
+function toggleSideList() {  // 왼쪽 레일의 채팅 버튼(펼치기·접기)과 접힌 뒤 나타나는 → 버튼이 같이 쓴다
   sideCollapsed = !sideCollapsed;
   try { localStorage.setItem("sideCollapsed", sideCollapsed ? "1" : "0"); } catch { /* 저장 실패는 무시 */ }
   applyPanels();
-};
+}
+$("sideOpen").onclick = toggleSideList;
 function toggleSummaryPanel(open = !docOpen) {  // 회의 요약 버튼이 요약 목록 패널을 열고 닫는다
   if (!inRoom()) return;
   docOpen = open;

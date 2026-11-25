@@ -5,7 +5,7 @@
     #rail, #info { display:none; }
     #app.doc-open { --doc-w:0px; }
     #app.side-collapsed:not(.in-room) > aside { display:flex; opacity:1; visibility:visible; pointer-events:auto; }
-    #sideFold, .side-open { display:none; }
+    .side-open { display:none; }
     #app.side-collapsed .chat-head { padding-left:12px; }
     #docPanel .doc-main { min-width:0; }
     #app:not(.doc-open) #docPanel { transform:translateY(100%); transition:transform .3s ease, opacity .2s ease, visibility 0s linear .3s; }  /* 아래로 내려가며 닫힌다 */
@@ -19,6 +19,7 @@
     .chat-head .titles { flex:1 1 0; }
     #status { display:none; }
     .room-menu { order:2; }
+    #settingsPop { left:12px; right:12px; top:auto; bottom:12px; width:auto; }
     .tl { order:3; flex:1 1 100%; }
     .tl select { flex:1; }
     .body { max-width:84%; }

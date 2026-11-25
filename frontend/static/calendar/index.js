@@ -210,7 +210,6 @@ async function deleteCalendarEvent(state, event) {
   }
 }
 
-$("calendarBtn").onclick = toggleCalendar;
 
 /* ---------- 일정 찾기: 요약에 쓴 자료에서 마감·일정 후보를 찾아 카드로 보여 주고, 확인한 것만 캘린더에 넣는다 ---------- */
 function addDeadlineFinder(container, sources, active) {
