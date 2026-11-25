@@ -1,7 +1,12 @@
 """계정과 실패 횟수를 공용 영속 저장소에 기록한다."""
 import time
+import uuid
 
 from app.core.database import Change, Conflict
+
+
+class ThrottleBlocked(Exception):
+    pass
 
 
 class AccountRepository:
@@ -27,12 +32,33 @@ class PersistentThrottle:
     def __init__(self, db, namespace, limit=5, window=60):
         self.db, self.namespace, self.limit, self.window = db, namespace, limit, window
 
-    def blocked(self, key):
-        record = self.db.get("THROTTLE#" + self.namespace, key)
-        return bool(record and len([stamp for stamp in record.value["fails"] if stamp > time.time() - self.window]) >= self.limit)
+    def reserve(self, key):
+        attempt = uuid.uuid4().hex
 
-    def fail(self, key):
-        self.db.update("THROTTLE#" + self.namespace, key, lambda value: {"fails": [stamp for stamp in (value or {}).get("fails", []) if stamp > time.time() - self.window] + [time.time()]})
+        def claim(value):
+            now = time.time()
+            value = value or {}
+            fails = [stamp for stamp in value.get("fails", []) if stamp > now - self.window]
+            pending = {item: stamp for item, stamp in value.get("pending", {}).items() if stamp > now - self.window}
+            if len(fails) + len(pending) >= self.limit:
+                raise ThrottleBlocked
+            return {"fails": fails, "pending": {**pending, attempt: now}}
 
-    def clear(self, key):
-        self.db.update("THROTTLE#" + self.namespace, key, lambda _: {"fails": []})
+        try:
+            self.db.update("THROTTLE#" + self.namespace, key, claim)
+        except ThrottleBlocked:
+            return None
+        return attempt
+
+    def finish(self, key, attempt, success):
+        def finish(value):
+            now = time.time()
+            value = value or {}
+            pending = {item: stamp for item, stamp in value.get("pending", {}).items() if stamp > now - self.window}
+            reserved_at = pending.pop(attempt, None)
+            fails = [stamp for stamp in value.get("fails", []) if stamp > now - self.window]
+            if reserved_at is not None:
+                fails = [stamp for stamp in fails if stamp > reserved_at] if success else [*fails, reserved_at]
+            return {"fails": fails, "pending": pending}
+
+        self.db.update("THROTTLE#" + self.namespace, key, finish)

@@ -56,6 +56,9 @@ async function deleteSummary(roomId, entryId) {
 }
 
 async function renameSummary(roomId, entryId, title) {
+  title = title.trim();
+  if (!title) return;
+  if ([...title].length > 60) { toast(t("summaryTitleLimit")); return; }
   const result = await api(`/api/ai/rooms/${roomId}/summaries/${entryId}`, "PATCH", {title});
   toast(t("summaryRenamed"));
   refreshSummaries();

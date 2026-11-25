@@ -1,21 +1,47 @@
 /* ---------- 채팅방 ---------- */
 let readTimer, readMembers = [], acknowledgedRead = 0;
 const readBadges = new Map();
-let socketGeneration = 0;
+let socketGeneration = 0, socketReady = false;
 const pendingMessages = new Map();
 const pendingTimers = new Map();
 const outboxKey = roomId => `messageOutbox:${me || "anonymous"}:${roomId}`;
+const MAX_SEND_ATTEMPTS = 3;
+function purgeLegacyOutboxes() {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("messageOutbox:")) localStorage.removeItem(key);
+    }
+  } catch {}
+}
+function clearPendingTimers() {
+  for (const timer of pendingTimers.values()) clearTimeout(timer);
+  pendingTimers.clear();
+}
+function clearOutbox(user) {
+  clearPendingTimers(); pendingMessages.clear();
+  const prefix = user ? `messageOutbox:${user}:` : "messageOutbox:";
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(prefix)) sessionStorage.removeItem(key);
+    }
+  } catch {}
+}
 function saveOutbox() {
   if (!currentRoom) return;
-  try { localStorage.setItem(outboxKey(currentRoom.roomId), JSON.stringify([...pendingMessages.values()].map(({body, sourceLanguage, clientMessageId}) => ({body, sourceLanguage, clientMessageId})))); } catch {}
+  try {
+    const key = outboxKey(currentRoom.roomId);
+    if (pendingMessages.size) sessionStorage.setItem(key, JSON.stringify([...pendingMessages.values()].map(({body, sourceLanguage, clientMessageId, attempts}) => ({body, sourceLanguage, clientMessageId, attempts}))));
+    else sessionStorage.removeItem(key);
+  } catch {}
 }
 function loadOutbox(roomId) {
   pendingMessages.clear();
-  for (const timer of pendingTimers.values()) clearTimeout(timer);
-  pendingTimers.clear();
+  clearPendingTimers();
   try {
-    const entries = JSON.parse(localStorage.getItem(outboxKey(roomId)) || "[]");
-    for (const item of entries) if (item?.clientMessageId && typeof item.body === "string") pendingMessages.set(item.clientMessageId, {...item, lastSentGeneration: 0});
+    const entries = JSON.parse(sessionStorage.getItem(outboxKey(roomId)) || "[]");
+    for (const item of entries) if (item?.clientMessageId && typeof item.body === "string") pendingMessages.set(item.clientMessageId, {...item, attempts:item.attempts || 0, lastSentGeneration: 0});
   } catch {}
   saveOutbox();
 }
@@ -25,17 +51,23 @@ function acknowledgeMessage(clientMessageId) {
   pendingMessages.delete(clientMessageId);
   clearTimeout(pendingTimers.get(clientMessageId)); pendingTimers.delete(clientMessageId);
   saveOutbox();
-  if ($("body").value === pending.body) $("body").value = "";
 }
 function transmitPending(sock, generation) {
-  if (sock !== ws || generation !== socketGeneration || sock.readyState !== 1) return;
+  if (!socketReady || sock !== ws || generation !== socketGeneration || sock.readyState !== 1) return;
   for (const item of pendingMessages.values()) {
     if (item.lastSentGeneration === generation) continue;
+    if (item.attempts >= MAX_SEND_ATTEMPTS) {
+      acknowledgeMessage(item.clientMessageId);
+      toast(t("failed"));
+      continue;
+    }
     item.lastSentGeneration = generation;
     if (!send({type:"message:send", body:item.body, sourceLanguage:item.sourceLanguage, clientMessageId:item.clientMessageId})) {
       item.lastSentGeneration = 0;
       continue;
     }
+    item.attempts++;
+    saveOutbox();
     clearTimeout(pendingTimers.get(item.clientMessageId));
     pendingTimers.set(item.clientMessageId, setTimeout(() => {
       if (!pendingMessages.has(item.clientMessageId) || sock !== ws || generation !== socketGeneration) return;
@@ -96,6 +128,8 @@ function enterRoom(r) {
 }
 function closeSocket() {
   socketGeneration++;
+  socketReady = false;
+  clearPendingTimers();
   clearTimeout(readTimer);
   clearTimeout(reconnectTimer);
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
@@ -142,6 +176,7 @@ document.addEventListener("click", event => {  // 방 메뉴 바깥을 누르면
 });
 
 function connect() {
+  socketReady = false;
   $("status").textContent = t(retry ? "reconnecting" : "connecting");
   const generation = ++socketGeneration, roomId = currentRoom?.roomId, authToken = token;
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -149,9 +184,7 @@ function connect() {
   const isCurrent = () => sock === ws && generation === socketGeneration && currentRoom?.roomId === roomId && token === authToken;
   sock.onopen = () => {
     if (!isCurrent()) { sock.close(); return; }
-    sock.send(JSON.stringify({ type:"auth", token }));  // 첫 메시지는 반드시 인증
-    retry = 0; $("status").textContent = t("connected");
-    transmitPending(sock, generation);
+    sock.send(JSON.stringify({ type:"auth", token:authToken }));  // 첫 메시지는 반드시 인증
   };
   sock.onmessage = ev => {
     if (!isCurrent()) return;
@@ -163,24 +196,31 @@ function connect() {
     else if (d.type === "message:new") { if (d.messageSeq > lastSeq) { lastSeq = d.messageSeq; addMessage(d); markVisibleRead(); } }
     else if (d.type === "message:ack") acknowledgeMessage(d.clientMessageId);
     else if (d.type === "media:update" || d.type === "media:ready") { if (cards[d.mediaId]) cards[d.mediaId](d); }
-    else if (d.type === "presence") { $("members").textContent = `${t("online")}: ${d.members.join(", ")}`; setOnlineUsers(d.members); }
+    else if (d.type === "presence") {
+      if (!socketReady) {
+        socketReady = true; retry = 0; $("status").textContent = t("connected");
+        transmitPending(sock, generation);
+      }
+      $("members").textContent = `${t("online")}: ${d.members.join(", ")}`; setOnlineUsers(d.members);
+    }
     else if (d.type === "system") { addSystem(`${d.user}${t(d.event === "joined" ? "joinedSys" : "leftSys")}`); loadParticipants(); }
     else if (d.type === "room:deleted") { leaveView(); toast(t("roomDeleted")); }
     else if (d.type === "read:update") {
       readMembers = readMembers.filter(member => member.user !== d.user).concat(d);
       renderReadReceipts();
     } else if (d.type === "error") {
-      if (d.clientMessageId && d.detail === "message too long") {
-        pendingMessages.delete(d.clientMessageId); clearTimeout(pendingTimers.get(d.clientMessageId)); pendingTimers.delete(d.clientMessageId); saveOutbox();
-      }
+      if (d.clientMessageId) acknowledgeMessage(d.clientMessageId);
       toast(t("failed"));
     }
   };
   sock.onclose = ev => {
     if (!isCurrent()) return;
+    socketReady = false;
+    clearPendingTimers();
     if (ev.code === 4401) return logout(true);  // 토큰이 없거나 만료
+    if (ev.code === 4400) { leaveView(); toast(t("failed")); return; }
     // 4000: 내가 나감 / 4403: 멤버 아님 / 4404: 방 없음 → 재접속하지 않고 닫는다
-    if ([4000, 4400, 4403, 4404].includes(ev.code)) return leaveView();
+    if ([4000, 4403, 4404].includes(ev.code)) return leaveView();
     // 그 외에는 마지막 messageSeq 이후만 다시 받아 누락 메시지를 복구한다.
     retry++; $("status").textContent = t("reconnecting");
     reconnectTimer = setTimeout(connect, Math.min(1000 * retry, 5000));
@@ -221,7 +261,7 @@ function addMessage(m) {
   if (!m.media) {
     const selection = document.createElement("input"); selection.type = "checkbox"; selection.title = "회의 요약에 포함";
     selection.className = "summary-choice";
-    selection.onchange = () => updateSummarySelection(m.messageSeq, {kind:"message", messageSeq:m.messageSeq}, m.bodyOriginal.length, selection.checked);
+    selection.onchange = () => { selection.checked = updateSummarySelection(m.messageSeq, {kind:"message", messageSeq:m.messageSeq}, selection.checked); };
     acts.append(selection);
     const clearTranslation = () => { body.querySelectorAll(".translation").forEach(e => e.remove()); translateButton.textContent = t("translate"); };
     const update = value => {
@@ -272,11 +312,10 @@ async function translateMessage(m, bubble, button) {
 $("form").onsubmit = e => {
   e.preventDefault();
   const body = $("body").value.trim();
-  if (!body) return;
-  if (!currentRoom) return;
+  if (!body || !currentRoom) return;
+  $("body").value = "";
   const clientMessageId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  pendingMessages.set(clientMessageId, {body, sourceLanguage: $("srcLang").value, clientMessageId, lastSentGeneration: 0});
+  pendingMessages.set(clientMessageId, {body, sourceLanguage: $("srcLang").value, clientMessageId, attempts:0, lastSentGeneration: 0});
   saveOutbox();
-  if (!ws || ws.readyState !== 1) $("status").textContent = t("reconnecting");
-  else transmitPending(ws, socketGeneration);
+  if (socketReady) transmitPending(ws, socketGeneration);
 };

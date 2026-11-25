@@ -4,12 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<script>
-  try {
-    const theme = localStorage.getItem("theme");
-    if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
-  } catch { /* 저장소를 쓸 수 없으면 시스템 테마를 따른다. */ }
-</script>
+<script src="/static/shared/theme.js"></script>
 <title>AI 협업 메신저 데모</title>
 <link rel="stylesheet" href="/static/shared/base.css?v=3">
 <link rel="stylesheet" href="/static/auth/styles.css?v=3">

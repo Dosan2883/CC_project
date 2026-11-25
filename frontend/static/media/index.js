@@ -107,8 +107,14 @@ function pageTranslateButton(mediaId, page, pre, active = () => true) {
 /* 문서 본문을 오른쪽 패널에 연다. 파일 카드의 본문 보기와 문서 목록이 함께 쓴다. 열 때마다 저장된 최신 추출 결과를 읽는다. */
 const AUDIO_EXTENSIONS = ["mp3", "m4a", "wav", "ogg", "flac"];
 const isAudioExt = ext => AUDIO_EXTENSIONS.includes((ext || "").toLowerCase());
-const audioPlayers = new Set();
-function stopAllAudio() { for (const player of audioPlayers) player.pause(); for (const player of audioPlayers) player.dispose?.(); audioPlayers.clear(); }  // 방을 바꾸거나 나가면 재생을 멈춘다
+const audioPlayers = new Map();
+function stopAudio(mediaId) {
+  const player = audioPlayers.get(mediaId);
+  if (!player) return;
+  audioPlayers.delete(mediaId);
+  player.dispose();
+}
+function stopAllAudio() { for (const mediaId of audioPlayers.keys()) stopAudio(mediaId); }  // 방을 바꾸거나 나가면 재생을 멈춘다
 
 /* 문서·이미지·영상 본문을 파일 카드 바로 아래 칸에 채운다. 열 때마다 저장된 최신 추출 결과를 읽는다. */
 async function fillDocument(text, mediaId, options) {
@@ -116,7 +122,7 @@ async function fillDocument(text, mediaId, options) {
   if (options.active()) renderDocument(text, mediaId, r, options);
 }
 
-function renderDocument(text, mediaId, r, {image, active}) {
+function renderDocument(text, mediaId, r, {image, ext, active}) {
   text.replaceChildren();
   (r.pages || []).forEach((page, i) => {
     if (r.pages.length > 1) text.append(el("h4", null, `${t("pageN")} ${i + 1}`));
@@ -127,14 +133,22 @@ function renderDocument(text, mediaId, r, {image, active}) {
     const message = image ? t("fe_" + ocrError) || t("ocrNoText") : t("emptyText");
     const pre = el("pre", null, hasText ? page : message);
     // 번역 버튼은 본문 위에 둔다. 긴 페이지에서도 스크롤 없이 바로 보이고, 번역은 버튼 아래(원문 위)에 붙는다.
-    if (hasText) text.append(pageTranslateButton(mediaId, i + 1, pre, () => active() && !text.hidden));
+    const translate = pageTranslateButton(mediaId, i + 1, pre, () => active() && !text.hidden);
+    if (hasText) text.append(translate);
+    const onCorrect = updated => {
+      const newText = updated.pages[i] || "";
+      text.querySelector(`.translation[data-page="${i + 1}"]`)?.remove();
+      translate.textContent = t("translate");
+      if (newText.trim() && !translate.parentElement) pre.before(translate);
+      if (!newText.trim()) translate.remove();
+      pre.textContent = newText.trim() ? newText : t(image ? "ocrNoText" : "emptyText");
+    };
     if (image) {
       const advanced = el("details", "file-ocr-options");
-      const onCorrect = updated => renderDocument(text, mediaId, updated, {image, active});
-      advanced.append(el("summary", null, t("ocrOptions")), pageReview(mediaId, i + 1, pre, r, {active, onCorrect}));
+      advanced.append(el("summary", null, t("ocrOptions")), pageReview(mediaId, i + 1, pre, r, {active, onCorrect, canOcr:true}));
       text.append(pre, advanced);
     } else {
-      text.append(pageReview(mediaId, i + 1, pre, r, {active}), pre);
+      text.append(pageReview(mediaId, i + 1, pre, r, {active, onCorrect, canOcr:ext === "pdf"}), pre);
     }
   });
   (r.segments || []).forEach(segment => {  // 대사 한 줄마다 시간·글·번역 버튼만 둔다
@@ -158,18 +172,23 @@ function audioInline(mediaId, ext) {
   language.value = targetLang || "original";  // 자막은 번역 언어를 따라간다
   const status = el("small", "audio-status"), now = el("div", "audio-now");
   box.append(language, player, now, status);
-  let segments = [], urls = [], generation = 0, loaded = false;
-  const active = () => currentRoom?.roomId === room && token === session && viewGeneration === view;
+  let segments = [], urls = [], generation = 0, loaded = false, disposed = false;
+  let subtitleRequest;
+  const playbackRequest = new AbortController();
+  const active = () => !disposed && currentRoom?.roomId === room && token === session && viewGeneration === view;
   const room = currentRoom?.roomId, session = token, view = viewGeneration;
   function clearTracks() {
     player.querySelectorAll("track").forEach(track => track.remove());
     urls.forEach(url => URL.revokeObjectURL(url)); urls = [];
   }
   async function load() {
+    if (!active()) return;
+    subtitleRequest?.abort();
+    const controller = subtitleRequest = new AbortController();
     const request = ++generation; clearTracks(); loaded = false;
     status.textContent = "자막 준비 중…"; setBusy(status, true);
     try {
-      const transcript = await api(`/api/media/${mediaId}/transcript`);
+      const transcript = await api(`/api/media/${mediaId}/transcript`, "GET", undefined, {signal:controller.signal});
       if (!active() || generation !== request) return;
       segments = transcript.segments || [];
       const target = language.value;
@@ -179,8 +198,13 @@ function audioInline(mediaId, ext) {
         if (!active() || generation !== request) return;
         if (!allowed) { language.value = "original"; return load(); }
       }
-      const response = await fetch(`/api/media/${mediaId}/subtitles?target=${encodeURIComponent(target)}&consent=${target !== "original"}`, {headers:{Authorization:"Bearer " + session}});
-      if (!response.ok) throw new Error((await response.json()).detail || "자막 생성 실패");
+      const response = await fetch(`/api/media/${mediaId}/subtitles?target=${encodeURIComponent(target)}&consent=${target !== "original"}`, {
+        headers:{Authorization:"Bearer " + session}, signal:controller.signal, cache:"no-store",
+      });
+      if (!response.ok) {
+        const detail = (await response.json().catch(() => null))?.detail;
+        throw new Error(typeof detail === "string" ? detail : t("failed"));
+      }
       const blob = await response.blob();
       if (!active() || generation !== request) return;
       const track = document.createElement("track"), url = URL.createObjectURL(blob); urls.push(url);
@@ -195,8 +219,7 @@ function audioInline(mediaId, ext) {
   }
   language.onchange = () => { load(); };
   player.onplay = () => {
-    for (const other of audioPlayers) if (other !== player) other.pause();
-    audioPlayers.add(player);
+    for (const other of audioPlayers.values()) if (other !== player) other.pause();
     if (!loaded) load();
   };
   player.ontimeupdate = () => {
@@ -211,10 +234,17 @@ function audioInline(mediaId, ext) {
     if (!active() || !box.isConnected) { document.removeEventListener("source:updated", changed); clearTracks(); return; }
     if (event.detail.mediaId === mediaId) { loaded = false; now.textContent = ""; load(); }
   };
-  player.dispose = () => { generation++; clearTracks(); document.removeEventListener("source:updated", changed); };
-  audioPlayers.add(player);
+  player.dispose = () => {
+    disposed = true; generation++;
+    playbackRequest.abort(); subtitleRequest?.abort();
+    player.pause(); clearTracks(); player.removeAttribute("src"); player.load();
+    document.removeEventListener("source:updated", changed);
+  };
+  stopAudio(mediaId);
+  audioPlayers.set(mediaId, player);
   document.addEventListener("source:updated", changed);
-  api(`/api/media/${mediaId}/play-url`).then(r => { if (active()) player.src = r.url; }).catch(() => { status.textContent = t("failed"); });
+  api(`/api/media/${mediaId}/play-url`, "GET", undefined, {signal:playbackRequest.signal})
+    .then(r => { if (active()) player.src = r.url; }).catch(() => { if (active()) status.textContent = t("failed"); });
   return box;
 }
 
@@ -284,7 +314,7 @@ function fileCard(m, sender) {
       loadingText = true;
       syncTextButton();
       try {
-        await fillDocument(text, m.mediaId, {image, active});
+        await fillDocument(text, m.mediaId, {image, ext:m.ext, active});
         if (!active()) return;
         loaded = true;
       } catch (error) {
@@ -376,7 +406,7 @@ function fileCard(m, sender) {
       clearImagePreviews(m.mediaId);
       msg.textContent = t("fileDeleted");
       invalidateText();
-      if (!image) stopAllAudio();
+      stopAudio(m.mediaId);
       audioHost.hidden = true; audioHost.replaceChildren();
     } else if (image && ["UPLOADED", "FAILED", "COMPLETED"].includes(s.status)) {
       act.append(textButton);

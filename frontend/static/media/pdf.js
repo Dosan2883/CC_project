@@ -11,9 +11,24 @@ function pdfButtons(m) {
   ];
 }
 
+function pdfContext(mediaId) {
+  const room = currentRoom?.roomId, generation = viewGeneration, authToken = token, epoch = itemEpoch(`file:${mediaId}`);
+  return {
+    authToken,
+    active: () => !!room && currentRoom?.roomId === room && viewGeneration === generation && token === authToken && epoch === itemEpoch(`file:${mediaId}`),
+  };
+}
+
 async function pdfPages(mediaId) {
-  const result = await api(`/api/media/${mediaId}/transcript`);
-  return result.pages || [];
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  imagePreviews.set(cancel, mediaId);
+  try {
+    const result = await api(`/api/media/${mediaId}/transcript`, "GET", undefined, {signal:controller.signal});
+    return result.pages || [];
+  } finally {
+    imagePreviews.delete(cancel);
+  }
 }
 
 /* 쪽 이동 막대: ← [번호] / 전체 → */
@@ -37,54 +52,67 @@ function pageNav(total, onChange) {
 
 /* 원본 보기: 서버가 그린 페이지 이미지를 쪽마다 보여 준다. 이미지에는 로그인 토큰을 실을 수 없어 받아서 표시한다. */
 async function openPdfOriginal(m) {
+  const {active, authToken} = pdfContext(m.mediaId);
+  if (!active()) return;
   let total;
-  try { total = (await pdfPages(m.mediaId)).length; } catch { return toast(t("failed")); }
+  try { total = (await pdfPages(m.mediaId)).length; } catch (error) { if (active() && error.name !== "AbortError") toast(t("failed")); return; }
+  if (!active()) return;
   if (!total) return toast(t("emptyText"));
   const win = openFloatWindow(`${m.filename} · ${t("pdfOriginal")}`, {width: 520, height: 680});
   const image = document.createElement("img"), status = el("small", "pdf-status");
   image.className = "pdf-image"; image.alt = m.filename;
-  let url = null, sequence = 0;
-  const authToken = token;
+  let url = null, request;
   const show = async page => {
-    const mine = ++sequence;
+    if (!active() || !win.open) return;
+    request?.abort();
+    const controller = request = new AbortController();
     status.textContent = "…"; setBusy(status, true);
     try {
-      const response = await fetch(`/api/media/${m.mediaId}/pages/${page}/image`, {headers: {Authorization: "Bearer " + authToken}});
+      const response = await fetch(`/api/media/${m.mediaId}/pages/${page}/image`, {
+        headers:{Authorization:"Bearer " + authToken}, signal:controller.signal, cache:"no-store",
+      });
       if (!response.ok) throw new Error();
       const blob = await response.blob();
-      if (mine !== sequence || !win.open) return;
+      if (request !== controller || !win.open || !active()) return;
       if (url) URL.revokeObjectURL(url);
       image.src = url = URL.createObjectURL(blob);
       status.textContent = ""; setBusy(status, false);
-    } catch { if (mine === sequence) { status.textContent = t("pdfImageFail"); setBusy(status, false); } }
+    } catch (error) {
+      if (request === controller && win.open && active() && error.name !== "AbortError") status.textContent = t("pdfImageFail");
+    } finally { if (request === controller) setBusy(status, false); }
   };
   const nav = pageNav(total, show);
   win.body.append(nav.node, status, image);
-  win.onClose = () => { if (url) URL.revokeObjectURL(url); };
+  const close = () => win.close();
+  imagePreviews.set(close, m.mediaId);
+  win.onClose = () => { imagePreviews.delete(close); request?.abort(); if (url) URL.revokeObjectURL(url); };
   show(1);
 }
 
 /* 전체 번역: 쪽을 차례로 번역해 오는 대로 보여 준다. 중간에 닫거나 한도를 넘으면 멈춘다. */
 async function openPdfTranslateAll(m) {
-  const target = targetLang, epoch = itemEpoch(`file:${m.mediaId}`), generation = viewGeneration, authToken = token;
-  if (!await ensureAiConsent() || generation !== viewGeneration || authToken !== token) return;
+  const target = targetLang, {active} = pdfContext(m.mediaId);
+  if (!active() || !await ensureAiConsent() || !active()) return;
   let pages;
-  try { pages = await pdfPages(m.mediaId); } catch { return toast(t("failed")); }
+  try { pages = await pdfPages(m.mediaId); } catch (error) { if (active() && error.name !== "AbortError") toast(t("failed")); return; }
+  if (!active()) return;
   if (!pages.length) return toast(t("emptyText"));
-  if (generation !== viewGeneration || authToken !== token) return;
   const win = openFloatWindow(`${m.filename} · ${t("pdfTranslateAll")} (${LANG_NAMES[target]})`, {width: 520, height: 620});
   const status = el("small", "pdf-status"), list = el("div", "pdf-results");
   win.body.append(status, list);
-  const alive = () => win.open && viewGeneration === generation && token === authToken && epoch === itemEpoch(`file:${m.mediaId}`);
+  const alive = () => win.open && active();
+  const controller = new AbortController(), close = () => win.close();
+  imagePreviews.set(close, m.mediaId);
+  win.onClose = () => { imagePreviews.delete(close); controller.abort(); };
   setBusy(status, true);
   try {
   for (let index = 0; index < pages.length && alive(); index++) {
     status.textContent = `${t("translating")} ${index + 1} / ${pages.length}`;
     const block = el("div", "pdf-block"); block.append(el("h4", null, `${t("pageN")} ${index + 1}`));
     list.append(block);
-    if (!pages[index].trim()) { block.append(el("div", "pdf-note", t("emptyText"))); continue; }
+    if (!pages[index]?.trim()) { block.append(el("div", "pdf-note", t("emptyText"))); continue; }
     try {
-      const result = await api("/api/ai/translate-page", "POST", {mediaId: m.mediaId, page: index + 1, target});
+      const result = await api("/api/ai/translate-page", "POST", {mediaId: m.mediaId, page: index + 1, target}, {signal:controller.signal});
       if (!alive()) return;
       block.append(el("div", "pdf-translated", result.translated));
     } catch (error) {
@@ -99,9 +127,12 @@ async function openPdfTranslateAll(m) {
 
 /* 전체 요약은 텍스트가 있는 쪽을 고르고, 전체 글자 수는 서버에서 검사한다. */
 async function pdfSummarizeAll(m) {
+  const {active} = pdfContext(m.mediaId);
+  if (!active()) return;
   let pages;
-  try { pages = await pdfPages(m.mediaId); } catch { return toast(t("failed")); }
-  const filled = pages.map((text, index) => ({text: text.trim(), page: index + 1})).filter(item => item.text);
+  try { pages = await pdfPages(m.mediaId); } catch (error) { if (active() && error.name !== "AbortError") toast(t("failed")); return; }
+  if (!active()) return;
+  const filled = pages.map((text, index) => ({text: text?.trim(), page: index + 1})).filter(item => item.text);
   if (!filled.length) return toast(t("pdfNoText"));
   if (filled.length > PDF_SUMMARY_PAGES) return toast(t("pdfTooManyPages"));
   return runAi(filled.map(item => ({kind: "page", mediaId: m.mediaId, page: item.page})), "summarize");

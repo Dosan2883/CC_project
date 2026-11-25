@@ -1,7 +1,7 @@
 // UI 표시 언어(i18n 리소스). AI API를 쓰지 않는다.
 const I18N = {
   ko: { title:"AI 협업 메신저", loginTitle:"AI 협업 메신저 (데모)", detailInfo:"상세 정보", calMine:"내 캘린더", calNoRoom:"관련 방 없음", calRoomTitle:"관련 방(색으로 구분돼요)", calPrivateHint:"나만 볼 수 있는 개인 캘린더예요. 원하는 일정만 직접 등록하세요.",roomAbout:"방 정보", landTitle:"언어의 벽 없이 대화하는 곳", landDesc:"이곳에 서비스 소개 문구가 들어갑니다. 번역과 요약, 일정까지 한곳에서 함께하세요.", navFeatures:"기능",navDevelopers:"개발자", featChat:"실시간 채팅", featTranslate:"번역", featSummary:"회의 요약", featFiles:"파일", featCalendar:"캘린더",devInfo:"전북대학교 컴퓨터인공지능학부 학부생", nickname:"닉네임", ui:"앱 표시 언어", send:"보내기",
-        roomName:"채팅방 이름", create:"입장", roomList:"내 채팅방",
+        roomName:"채팅방 이름", create:"입장", roomList:"내 채팅방", summarySourceLimit:"자료를 최대 20개까지 선택할 수 있습니다", summaryTitleLimit:"요약 이름은 60자까지 입력할 수 있습니다",
         noRooms:"아직 들어간 채팅방이 없습니다.\n이름을 입력해 입장하세요.", memberUnit:"명", onlineUnit:"명 접속", back:"← 목록", leave:"나가기",
         pickTitle:"채팅방을 선택하세요", pickDesc:"같은 이름을 입력한 사람끼리 같은 방에서 대화합니다.",
         target:"번역 언어", placeholder:"메시지를 입력하세요", online:"접속 중", connecting:"연결 중…",
@@ -35,7 +35,7 @@ calErr_DUPLICATE_EVENT:"같은 날짜와 시간에 동일한 일정이 있습니
         pwPlaceholder:"비밀번호 (4자 이상)", pwEnter:"비밀번호", publicRooms:"공개 채팅방", noPublic:"공개 채팅방이 없습니다.", joinBtn:"참가", open:"입장",
         eDup:"이미 있는 채팅방 이름입니다", eBad:"방 이름 또는 비밀번호가 올바르지 않습니다", eMany:"시도가 너무 많습니다. 잠시 후 다시 시도하세요", ePw:"비공개방은 비밀번호를 4자 이상 입력하세요" },
   en: { title:"AI Collab Messenger", loginTitle:"AI Collab Messenger (demo)", detailInfo:"Details", calMine:"My calendar", calNoRoom:"No related room", calRoomTitle:"Related room (shown as a color)", calPrivateHint:"This is your private calendar. Only you can see it; add just the events you want.",roomAbout:"About this room", landTitle:"Chat without language barriers", landDesc:"Placeholder text for the service introduction goes here. Translation, summaries and calendar in one place.", navFeatures:"Features",navDevelopers:"Developers", featChat:"Real-time chat", featTranslate:"Translation", featSummary:"Meeting summaries", featFiles:"Files", featCalendar:"Calendar",devInfo:"Undergraduate students, Computer Science and Artificial Intelligence, Jeonbuk National University", nickname:"Nickname", ui:"App language", send:"Send",
-        roomName:"Room name", create:"Enter", roomList:"My rooms",
+        roomName:"Room name", create:"Enter", roomList:"My rooms", summarySourceLimit:"Select up to 20 sources", summaryTitleLimit:"Summary names can be up to 60 characters",
         noRooms:"No rooms yet.\nType a room name to enter.", memberUnit:" members", onlineUnit:" online", back:"← Rooms", leave:"Leave",
         pickTitle:"Select a room", pickDesc:"People who type the same room name chat together.",
         target:"Translation language", placeholder:"Type a message", online:"Online", connecting:"Connecting…",
@@ -69,7 +69,7 @@ calErr_DUPLICATE_EVENT:"The same event already exists at that date and time.", c
         pwPlaceholder:"Password (4+ chars)", pwEnter:"Password", publicRooms:"Public rooms", noPublic:"No public rooms.", joinBtn:"Join", open:"Open",
         eDup:"That room name is already taken", eBad:"Invalid room name or password", eMany:"Too many attempts. Try again later", ePw:"Private rooms need a password (4+ chars)" },
   ja: { title:"AIコラボメッセンジャー", loginTitle:"AIコラボメッセンジャー (デモ)", detailInfo:"詳細情報", calMine:"マイカレンダー", calNoRoom:"関連ルームなし", calRoomTitle:"関連ルーム（色で区別されます）", calPrivateHint:"自分だけが見られる個人カレンダーです。必要な予定だけ登録できます。",roomAbout:"ルーム情報", landTitle:"言葉の壁なく話せる場所", landDesc:"ここにサービス紹介の文が入ります。翻訳・要約・予定をひとつの場所で。", navFeatures:"機能",navDevelopers:"開発者", featChat:"リアルタイムチャット", featTranslate:"翻訳", featSummary:"会議要約", featFiles:"ファイル", featCalendar:"カレンダー",devInfo:"全北大学 コンピュータ人工知能学部 学部生", nickname:"ニックネーム", ui:"表示言語", send:"送信",
-        roomName:"ルーム名", create:"入室", roomList:"参加中のルーム",
+        roomName:"ルーム名", create:"入室", roomList:"参加中のルーム", summarySourceLimit:"資料は20件まで選択できます", summaryTitleLimit:"要約名は60文字まで入力できます",
         noRooms:"参加中のルームがありません。\nルーム名を入力して入室してください。", memberUnit:"人", onlineUnit:"人接続中", back:"← 一覧", leave:"退出",
         pickTitle:"ルームを選択してください", pickDesc:"同じルーム名を入力した人同士でチャットします。",
         target:"翻訳言語", placeholder:"メッセージを入力", online:"オンライン", connecting:"接続中…",

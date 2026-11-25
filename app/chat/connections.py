@@ -9,6 +9,7 @@ from app.chat.events import EventBus
 from app.core import metrics
 
 log = logging.getLogger(__name__)
+DELIVERY_TIMEOUT = 5
 
 
 class ConnectionManager:
@@ -40,45 +41,65 @@ class ConnectionManager:
 
     async def replay(self, room, ws):
         for message in await asyncio.to_thread(self.store.after, room, self.cursors.get(ws, 0)):
+            if ws not in self.cursors:
+                return
             await ws.send_json(message)
-            self.cursors[ws] = message["messageSeq"]
+            if ws in self.cursors:
+                self.cursors[ws] = message["messageSeq"]
 
     @property
     def connection_count(self):
         return len(self.cursors)
 
     async def deliver(self, room, payload):
-        if payload["type"] == "presence:refresh":
-            for rid in list(self.conns):
-                await self.deliver(rid, {"type": "presence", "members": self.members(rid)})
+        event = payload["type"]
+        if event in ("presence:refresh", "events:reconnected"):
+            await asyncio.gather(*(self.deliver(rid, {"type": "presence", "members": self.members(rid)}
+                                    if event == "presence:refresh" else {"type":"events:replay"}) for rid in list(self.conns)))
             return
-        for user, sockets in list(self.conns.get(room, {}).items()):
-            for ws in list(sockets):
-                lock = self.locks.get(ws)
-                if lock is None:
-                    continue
-                try:
-                    async with lock:
-                        try:
-                            await asyncio.to_thread(self.rooms.require_member, room, user)
-                        except HTTPException as error:
-                            if payload["type"] == "room:deleted":
-                                await ws.send_json(payload)
-                            await ws.close(code=4404 if error.status_code == 404 else 4000)
-                            continue
-                        before = self.cursors.get(ws, 0)
-                        await self.replay(room, ws)
-                        delivered = self.cursors.get(ws, before)
-                        if payload["type"] == "message:new" and before < payload["messageSeq"] <= delivered:
-                            sent_at = payload.get("sentAt")
-                            if isinstance(sent_at, (int, float)):
-                                metrics.record("MessageDeliveryMs", max(0, time.time() * 1000 - sent_at), "Milliseconds")
-                        if payload["type"] != "message:new":
+
+        async def deliver_to_socket(user, ws, close_code):
+            lock = self.locks.get(ws)
+            if lock is None:
+                return
+            if close_code:
+                self.remove(room, user, ws)
+            try:
+                async with asyncio.timeout(DELIVERY_TIMEOUT), lock:
+                    if close_code:
+                        if event == "room:deleted":
                             await ws.send_json(payload)
+                        await ws.close(code=close_code)
+                        return
+                    if ws not in self.locks:
+                        return
+                    before = self.cursors[ws]
+                    if event != "presence":
+                        await self.replay(room, ws)
+                    if event == "message:new" and before < payload["messageSeq"] <= self.cursors.get(ws, before):
+                        sent_at = payload.get("sentAt")
+                        if isinstance(sent_at, (int, float)):
+                            metrics.record("MessageDeliveryMs", max(0, time.time() * 1000 - sent_at), "Milliseconds")
+                    if event not in ("message:new", "events:replay"):
+                        await ws.send_json(payload)
+            except Exception:
+                self.remove(room, user, ws)
+                with suppress(Exception):
+                    await asyncio.wait_for(ws.close(), timeout=1)
+
+        async def deliver_to_user(user, sockets):
+            close_code = None
+            if event != "presence":
+                try:
+                    await asyncio.to_thread(self.rooms.require_member, room, user)
+                except HTTPException as error:
+                    close_code = 4404 if error.status_code == 404 else 4000
                 except Exception:
-                    with suppress(Exception):
-                        await ws.close()
-                    self.remove(room, user, ws)
+                    log.exception("Room membership lookup failed")
+                    return
+            await asyncio.gather(*(deliver_to_socket(user, ws, close_code) for ws in sockets))
+
+        await asyncio.gather(*(deliver_to_user(user, list(sockets)) for user, sockets in list(self.conns.get(room, {}).items())))
 
     async def broadcast(self, room, payload):
         # DB 저장은 호출자에게서 먼저 완료된다. Redis가 끊겨도 이 서버의

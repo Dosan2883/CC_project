@@ -17,17 +17,30 @@ class EventBus:
         self.remote = {}
         self.tasks = []
         self.redis = None
+        self.pubsub = None
 
     async def start(self):
         if not self.url:
             return
         from redis.asyncio import Redis
         self.redis = Redis.from_url(self.url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
-        await self.redis.ping()
-        self.pubsub = self.redis.pubsub()
-        await self.pubsub.subscribe(self.channel)
+        try:
+            await self.redis.ping()
+            await self.subscribe()
+        except Exception:
+            log.exception("Redis startup failed; the event listener will retry")
         self.tasks = [asyncio.create_task(self.listen()), asyncio.create_task(self.heartbeat())]
-        await self.publish("", {"type": "presence:request"})
+
+    async def subscribe(self):
+        pubsub = self.redis.pubsub()
+        try:
+            await pubsub.subscribe(self.channel)
+            await self.publish("", {"type": "presence:request"})
+        except BaseException:
+            with suppress(Exception):
+                await pubsub.aclose()
+            raise
+        self.pubsub = pubsub
 
     async def publish(self, room, payload):
         if self.redis:
@@ -40,10 +53,19 @@ class EventBus:
     async def listen(self):
         while True:
             try:
+                if self.pubsub is None:
+                    await self.subscribe()
+                    await self.handler("", {"type": "events:reconnected"})
                 message = await self.pubsub.get_message(ignore_subscribe_messages=True, timeout=1)
-                if not message:
-                    await asyncio.sleep(0.01)
-                    continue
+            except Exception:
+                log.exception("Redis subscription failed; reconnecting")
+                await self.close_subscription()
+                await asyncio.sleep(1)
+                continue
+            if not message:
+                await asyncio.sleep(0.01)
+                continue
+            try:
                 data = json.loads(message["data"])
                 if data["node"] == self.node:
                     continue
@@ -55,11 +77,14 @@ class EventBus:
                     await self.handler("", {"type": "presence:refresh"})
                 else:
                     await self.handler(data["room"], payload)
-            except asyncio.CancelledError:
-                raise
             except Exception:
-                log.exception("Redis event listener failed; reconnecting")
-                await asyncio.sleep(1)
+                log.exception("Redis event delivery failed")
+
+    async def close_subscription(self):
+        pubsub, self.pubsub = self.pubsub, None
+        if pubsub is not None:
+            with suppress(Exception):
+                await pubsub.aclose()
 
     async def heartbeat(self):
         while True:
@@ -86,7 +111,8 @@ class EventBus:
             with suppress(asyncio.CancelledError):
                 await task
         self.tasks.clear()
-        if self.redis:
-            await self.pubsub.aclose()
-            await self.redis.aclose()
-            self.redis = None
+        await self.close_subscription()
+        redis, self.redis = self.redis, None
+        self.remote.clear()
+        if redis is not None:
+            await redis.aclose()

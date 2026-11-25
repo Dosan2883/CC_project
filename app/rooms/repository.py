@@ -20,6 +20,12 @@ def retry_conflicts(function):
     return wrapped
 
 
+def membership_required(room):
+    if room.get("visibility") == "private":
+        return HTTPException(404, "room not found")
+    return HTTPException(403, "not a member")
+
+
 class RoomRepository:
     def __init__(self, db):
         self.db = db
@@ -48,10 +54,10 @@ class RoomRepository:
         return [record.value for record in self.db.query("ROOM#" + room_id, "MEMBER#")]
 
     def require_member(self, room_id, user):
-        self.record(room_id)
+        room = self.record(room_id)
         member = self.member(room_id, user)
         if not member:
-            raise HTTPException(403, "not a member")
+            raise membership_required(room.value)
         return member
 
     def create(self, room):
@@ -81,17 +87,20 @@ class RoomRepository:
         room = self.record(room_id)
         member = self.db.get("ROOM#" + room_id, "MEMBER#" + user)
         if not member:
-            return False
+            raise HTTPException(404, "room not found")
         self.db.commit([room.change(room.value, check=True), member.change(None)])
         return True
 
     @retry_conflicts
     def delete(self, room_id, user):
         room = self.record(room_id)
+        member = self.db.get("ROOM#" + room_id, "MEMBER#" + user)
+        if not member:
+            raise HTTPException(404, "room not found")
         if room.value["createdBy"] != user:
             raise HTTPException(403, "only the creator can delete this room")
         name = self.db.get("ROOM_NAMES", room.value["key"])
-        changes = [room.change({**room.value, "deletedAt": int(time.time() * 1000)})]
+        changes = [room.change({**room.value, "deletedAt": int(time.time() * 1000)}), member.change(member.value, check=True)]
         if name and name.value["roomId"] == room_id:
             changes.append(name.change(None))
         self.db.commit(changes)
@@ -101,7 +110,7 @@ class RoomRepository:
         room = self.record(room_id)
         member = self.db.get("ROOM#" + room_id, "MEMBER#" + user)
         if not member:
-            raise HTTPException(403, "not a member")
+            raise membership_required(room.value)
         if seq < 0 or seq > room.value["lastMessageSeq"]:
             raise HTTPException(422, "invalid read sequence")
         updated = {**member.value, "lastReadSeq": max(seq, member.value["lastReadSeq"])}

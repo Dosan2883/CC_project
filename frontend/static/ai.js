@@ -6,10 +6,17 @@ class SelectionMap extends Map {
   clear() { super.clear(); refreshSelectionBar(); }
 }
 const aiSelections = new SelectionMap();
+const MAX_AI_SOURCES = 20;
 /* chat/index.js와 auth/index.js가 부르는 함수. 방을 바꾸거나 나가면 선택을 비우고, 메시지 체크박스는 회의 요약 선택(aiSelections)에 반영한다. */
 function resetAiPanel() { aiSelections.clear(); }
-function updateSummarySelection(key, source, size, checked) {
-  if (checked) aiSelections.set(String(key), source); else aiSelections.delete(String(key));
+function updateSummarySelection(key, source, checked) {
+  key = String(key);
+  if (checked && !aiSelections.has(key) && aiSelections.size >= MAX_AI_SOURCES) {
+    toast(t("summarySourceLimit"));
+    return false;
+  }
+  if (checked) aiSelections.set(key, source); else aiSelections.delete(key);
+  return checked;
 }
 /* 요약·번역 근거 원문을 보여 주고, 가능한 항목은 대상 언어로 번역해 바꿔 보여 준다. */
 function evidenceLabel(e) {
@@ -74,6 +81,7 @@ function summaryNameRow(roomId, entryId, active) {
 
 async function runAi(sources, kind = "summarize") {
   if (!currentRoom || !sources.length) return toast("메시지 또는 문단을 먼저 선택하세요.");
+  if (sources.length > MAX_AI_SOURCES) return toast(t("summarySourceLimit"));
   const roomId = currentRoom.roomId, generation = viewGeneration, authToken = token;
   if (!await ensureAiConsent() || currentRoom?.roomId !== roomId || viewGeneration !== generation || token !== authToken) return;
   // 번역은 번역 대상 언어로, 요약은 앱 표시 언어로 만든다. 근거 원문은 번역 대상 언어로 보여 준다.
@@ -133,7 +141,7 @@ async function runAi(sources, kind = "summarize") {
 }
 
 
-function pageReview(mediaId, page, pre, transcript, {active = () => true, onCorrect} = {}) {
+function pageReview(mediaId, page, pre, transcript, {active = () => true, onCorrect, canOcr = false} = {}) {
   const controls = document.createElement("div");
   const language = document.createElement("select");
   for (const code of ["ko", "en", "ja", "zh-CN", "es", "fr"]) language.add(new Option(LANG_NAMES[code] || code, code));
@@ -141,37 +149,37 @@ function pageReview(mediaId, page, pre, transcript, {active = () => true, onCorr
   language.value = transcript.corrections?.[String(page)]?.language || detail?.language || "ko";
   const note = document.createElement("p"); note.textContent = detail ? `${detail.method} · ${detail.model || "텍스트 추출"} · ${detail.language || "미지정"}${detail.needsReview ? " · 원문 확인 필요" : ""}${detail.error ? " · " + (t("fe_" + detail.error) || detail.error) : ""}` : "추출 원문";
   const editor = document.createElement("textarea"); editor.value = transcript.pages[page - 1] || ""; editor.rows = 8; editor.style.width = "100%";
+  editor.maxLength = 12000;
   const button = (label, action) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; b.onclick = action; return b; };
   const source = () => ({kind:"page", mediaId, page, startChar:[...editor.value.slice(0, editor.selectionStart)].length, ...(editor.selectionEnd > editor.selectionStart ? {endChar:[...editor.value.slice(0, editor.selectionEnd)].length} : {startChar:0})});
   controls.append(note, language, editor);
   const include = document.createElement("input"); include.type = "checkbox";
-  include.onchange = () => include.checked ? aiSelections.set(`${mediaId}:${page}`, {kind:"page", mediaId, page}) : aiSelections.delete(`${mediaId}:${page}`);
+  include.className = "summary-choice";
+  const selectionKey = `${mediaId}:${page}`;
+  include.checked = aiSelections.has(selectionKey);
+  include.onchange = () => { include.checked = updateSummarySelection(selectionKey, {kind:"page", mediaId, page}, include.checked); };
   controls.append(include, document.createTextNode("회의 요약에 이 페이지 포함"));
   controls.append(button("수정 저장", async () => {
     try {
       const r = await api(`/api/media/${mediaId}/pages/${page}`, "PATCH", {version:transcript.version || 1, text:editor.value, language:language.value});
       if (!active()) return;
-      if (onCorrect) onCorrect(r);
-      else {
-        Object.assign(transcript, r);
-        pre.textContent = editor.value;
-        for (const old of pre.parentElement.querySelectorAll(".translation")) old.remove();
-      }
+      Object.assign(transcript, r);
+      onCorrect?.(r);
       document.dispatchEvent(new CustomEvent("source:updated", {detail:{mediaId}}));
       toast("저장했습니다.");
     } catch (e) { if (active()) toast(e.code || t("failed")); }
   }));
   for (const [label, kind] of [["선택 범위 번역", "translate"], ["선택 범위 요약", "summarize"]]) controls.append(button(label, () => {
-    if (editor.value !== transcript.pages[page - 1]) return toast("수정한 원문을 먼저 저장하세요.");
+    if (editor.value !== (transcript.pages[page - 1] || "")) return toast("수정한 원문을 먼저 저장하세요.");
     runAi([source()], kind);
   }));
-  controls.append(button("이 언어로 OCR 다시 실행", async () => {
+  if (canOcr) controls.append(button("이 언어로 OCR 다시 실행", async () => {
     try {
       const state = await api(`/api/media/${mediaId}/process?language=${encodeURIComponent(language.value)}`, "POST");
       if (active()) cards[mediaId]?.(state);
     } catch (e) { if (active()) toast(t("fe_" + e.code) || e.code || t("failed")); }
   }));
-  controls.append(button("페이지 이미지·인식 영역 확인", async () => {
+  if (canOcr) controls.append(button("페이지 이미지·인식 영역 확인", async () => {
     let dispose;
     const generation = viewGeneration, authToken = token;
     try {

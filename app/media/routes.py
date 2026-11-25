@@ -5,12 +5,12 @@ import json
 import uuid
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from app.core.database import Conflict
+from app.core.database import Change, Conflict
 from app.core.runtime import db
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.auth.dependencies import current_user
-from app.core.runtime import manager, media_svc, store, room_repo
+from app.core.runtime import manager, media_svc, room_repo
 from app.core.runtime import secret as signing_secret
 from app.media import playback
 from app.media.schemas import UploadRequest
@@ -61,28 +61,25 @@ async def upload_file(media_id: str, token: str, request: Request):
     try:
         asset = await asyncio.to_thread(media_svc.check_token, media_id, token)
         data = await read_limited(request, max_bytes_for(asset["ext"]))
-        asset = await asyncio.to_thread(media_svc.receive_upload, media_id, token, data)
+        asset, message, created = await asyncio.to_thread(media_svc.receive_upload, media_id, token, data)
     except MediaError as e:
         raise HTTPException(e.status, e.code)
-    await publish_file_card(media_id, asset)
+    if created:
+        await manager.broadcast(asset["roomId"], message)
     return {"ok": True}
-
-
-async def publish_file_card(media_id, asset):
-    card = {"mediaId": media_id, "filename": asset["filename"], "kind": asset["type"], "ext": asset["ext"], "size": asset["size"]}
-    message = await asyncio.to_thread(store.append, asset["roomId"], asset["uploader"], asset["filename"], "und", card)
-    await manager.broadcast(asset["roomId"], message)
-    return message
 
 
 @router.post("/api/files/{media_id}/complete")
 async def complete_upload(media_id: str, user: str = Depends(current_user)):
     await asyncio.to_thread(media_member, media_id, user)
     try:
-        asset = await asyncio.to_thread(media_svc.complete_upload, media_id, user)
+        asset, message, created = await asyncio.to_thread(media_svc.complete_upload, media_id, user)
     except MediaError as error:
         raise HTTPException(error.status, error.code)
-    message = await publish_file_card(media_id, asset)
+    if message is None:
+        raise HTTPException(409, "UPLOAD_MESSAGE_NOT_FOUND")
+    if created:
+        await manager.broadcast(asset["roomId"], message)
     return {"ok": True, "messageSeq": message["messageSeq"]}
 
 
@@ -114,14 +111,14 @@ def correct_page(media_id: str, page: int, body: PageCorrection, user: str = Dep
     record = db.get("MEDIA", "ASSET#" + media_id)
     if not 1 <= page <= len(result["pages"]):
         raise HTTPException(422, "INVALID_PAGE")
-    if body.version != result.get("version", 1):
+    if body.version != result.get("version", 1) or body.version != record.value.get("extractionVersion", 1):
         raise HTTPException(409, "VERSION_CONFLICT")
     result.setdefault("originalPages", list(result["pages"]))
     result["pages"][page - 1] = body.text
     result["version"] = body.version + 1
     corrections = result.setdefault("corrections", {})
     corrections[str(page)] = {"language": body.language, "user": user, "version": result["version"]}
-    key = f"extracted/{media_id}/revision-{uuid.uuid4().hex}.json"
+    key = f'rooms/{asset["roomId"]}/files/{media_id}/extracted/{result["version"]}/{uuid.uuid4().hex}.json'
     media_svc.storage.put(key, json.dumps(result, ensure_ascii=False).encode())
     room = room_repo.record(asset["roomId"])
     member = db.get("ROOM#" + asset["roomId"], "MEMBER#" + user)
@@ -130,8 +127,9 @@ def correct_page(media_id: str, page: int, body: PageCorrection, user: str = Dep
     try:
         from app.ai.refresh import request as refresh_request
         db.commit([room.change(room.value, check=True), member.change(member.value, check=True),
+                   Change("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + media_id, None, None, check=True),
                    record.change({**record.value, "transcriptKey": key, "extractionVersion": result["version"]}),
-                   refresh_request(asset["roomId"], {"mediaId":media_id}, key)])
+                   *refresh_request(asset["roomId"], {"mediaId":media_id}, key)])
     except Conflict:
         raise HTTPException(409, "VERSION_CONFLICT")
     media_svc.on_event(asset["roomId"], {"type":"source:updated", "mediaId":media_id, "version":result["version"]})
@@ -190,10 +188,17 @@ def stream_media(media_id: str, token: str, request: Request):
 @router.get("/api/media/{media_id}/original")
 def original(media_id: str, user: str = Depends(current_user)):
     asset = media_member(media_id, user)
-    if asset["status"] == "UPLOADING":
+    if asset.get("status") == "UPLOADING":
         raise HTTPException(409, "NOT_UPLOADED")
     types = {"pdf":"application/pdf", "png":"image/png", "jpg":"image/jpeg", "jpeg":"image/jpeg"}
-    return Response(media_svc.original(media_id), media_type=types.get(asset["ext"], "application/octet-stream"), headers={"Cache-Control":"no-store", "X-Content-Type-Options":"nosniff"})
+    try:
+        raw = media_svc.original(media_id)
+    except MediaError as error:
+        raise HTTPException(error.status, error.code) from error
+    headers = {"Cache-Control":"no-store", "X-Content-Type-Options":"nosniff"}
+    if asset["ext"] == "pdf":
+        headers["Content-Security-Policy"] = "sandbox"
+    return Response(raw, media_type=types.get(asset["ext"], playback.CONTENT_TYPES.get(asset["ext"], "application/octet-stream")), headers=headers)
 
 
 @router.get("/api/media/{media_id}")
@@ -232,12 +237,12 @@ def correct_segment(media_id: str, index: int, body: SegmentCorrection, user: st
     record = db.get("MEDIA", "ASSET#" + media_id)
     if not 0 <= index < len(result.get("segments", [])):
         raise HTTPException(422, "INVALID_SEGMENT")
-    if result.get("version", 1) != body.version:
+    if result.get("version", 1) != body.version or record.value.get("extractionVersion", 1) != body.version:
         raise HTTPException(409, "VERSION_CONFLICT")
     result.setdefault("originalSegments", [dict(s) for s in result["segments"]])
     result["segments"][index].update(text=body.text, needsReview=False, correctedBy=user)
     result["version"] = body.version + 1
-    key = f"extracted/{media_id}/revision-{uuid.uuid4().hex}.json"
+    key = f'rooms/{asset["roomId"]}/files/{media_id}/extracted/{result["version"]}/{uuid.uuid4().hex}.json'
     media_svc.storage.put(key, json.dumps(result, ensure_ascii=False).encode())
     room = room_repo.record(asset["roomId"])
     member = db.get("ROOM#" + asset["roomId"], "MEMBER#" + user)
@@ -245,8 +250,9 @@ def correct_segment(media_id: str, index: int, body: SegmentCorrection, user: st
         raise HTTPException(403, "NOT_A_MEMBER")
     try:
         db.commit([room.change(room.value, check=True), member.change(member.value, check=True),
+                   Change("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + media_id, None, None, check=True),
                    record.change({**record.value, "transcriptKey":key, "extractionVersion":result["version"]}),
-                   request(asset["roomId"], {"mediaId":media_id}, key)])
+                   *request(asset["roomId"], {"mediaId":media_id}, key)])
     except Conflict:
         raise HTTPException(409, "VERSION_CONFLICT")
     media_svc.on_event(asset["roomId"], {"type":"source:updated", "mediaId":media_id, "version":result["version"]})

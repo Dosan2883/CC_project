@@ -3,6 +3,7 @@
 사용: python -m scripts.prepare_stt            (STT_MODEL, STT_MODEL_DIR 설정을 따른다)
 """
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -11,6 +12,10 @@ from app.core import config  # noqa: F401  (.env를 읽는다)
 
 
 def main():
+    missing = [name for name in ("ffmpeg", "ffprobe") if not shutil.which(name)]
+    if missing:
+        print("PATH에서 음성 전처리 도구를 찾을 수 없습니다: " + ", ".join(missing), file=sys.stderr)
+        return 1
     size = os.getenv("STT_MODEL", "base")
     directory = os.getenv("STT_MODEL_DIR") or None
     try:

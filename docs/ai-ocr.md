@@ -13,7 +13,7 @@
 `end`로 선택한다. STT 생성은 E의 별도 구현이며 이 API는 존재하는 녹취만 읽는다.
 한 요청은 최대 20개 자료·40,000자·입력 16조각이다. 긴 자료는 조각 요약과 종합을 수행하고 성공 조각을 재사용한다.
 조회는 `GET /api/ai/jobs/{jobId}`, 실패 재요청은 `POST .../{jobId}/retry`다.
-현재 방 멤버가 저장된 요약을 공유하며 원문 버전이 달라지면 409로 최신 결과로의 표시를 막는다. 명시적 이력 조회는 이전 버전임을 표시한다.
+새 외부 호출이 필요한 요청은 등록 전에 계정 동의와 비공개방 정책을 확인한다. 화면은 별도 동의 팝업 없이 계정 동의를 저장한 뒤 작업을 요청한다. 현재 방 멤버는 캐시를 재사용할 수 있으며 이전 원문 버전은 이력으로 표시한다. 삭제된 요약은 명시적으로 다시 요청하기 전까지 404를 반환한다.
 요약은 [1] 형식의 근거 번호를 요구하고 존재하지 않는 번호가 있으면 실패 처리한다.
 근거 원문·메시지 시각·페이지·녹취 구간도 결과에 저장한다. 생성 요약의 사실 정확도는 별도 평가가 필요하다.
 
@@ -22,7 +22,8 @@ SQS로 등록하고 `lambda/ai_jobs/handler.py`를 SQS 이벤트 소스로 연�
 `deploy/ai-jobs.yaml`은 큐·DLQ·이벤트 매핑·1분 복구 스케줄을 구성한다.
 AI Lambda 배포 ZIP에는 `app/`, 루트 `requirements.txt`의 의존성과
 `lambda/ai_jobs/handler.py`를 루트 `handler.py`로 포함해야 한다.
-기존 실행 역할에는 DynamoDB 트랜잭션, S3 결과 읽기/쓰기, SQS 수신·삭제·전송·가시시간 권한이 필요하다.
+스택에는 기존 SSM SecureString의 이름을 `AuthSecretParameterName`, `TranslateSecretParameterName`으로 전달한다. 실행 역할에 두 파라미터의 `ssm:GetParameter`와 고객 관리형 키를 사용하는 경우 `kms:Decrypt`를 허용한다. 나머지 작업 권한은 DynamoDB 트랜잭션, S3 결과 읽기·쓰기·스테이징 삭제, SQS 수신·삭제·전송·가시시간 변경이다.
+VPC 내부 Redis를 쓰는 경우 `LambdaSubnetIds`와 `LambdaSecurityGroupIds`에 쉼표로 구분한 ID를 전달한다. 실행 역할에 Lambda VPC 네트워크 인터페이스 권한을 부여하고 서브넷에서 Redis와 SSM·DynamoDB·S3·SQS·번역 Lambda URL에 접속할 수 있게 구성한다.
 저장 결과 재사용·방별 패널·지연 추출의 최신 동작은 [2026-11-16 변경 내역](result-reuse-20261116.md)을 참고한다.
 앱에도 출력된 AIQueueUrl을 설정한다. 번역용 Lambda에는 업데이트한
 `lambda/translation/handler.py`를 배포해야 `action:summarize`를 처리한다.
@@ -31,7 +32,7 @@ AI Lambda 배포 ZIP에는 `app/`, 루트 `requirements.txt`의 의존성과
 DB deadLetter와 SQS RedrivePolicy로 처리한다. 만료된 실행 lease는 복구 스케줄이 다시 등록한다.
 `AI_LANGUAGE_LIMITS`는 대상 언어별 시간당 호출 수와 토큰 예산을 설정한다.
 기본값은 60회·120000 토큰이며 입력 UTF-8 바이트 + 최대 출력 4000 토큰을 보수적으로 예약한다.
-실패한 외부 호출도 예산을 소비하며 번역의 기존 사용자 한도도 유지된다.
+실패한 외부 호출도 예산을 소비한다. 채팅·페이지·자막 번역은 동일한 예약 레코드에서 사용자 시간당 한도와 대상 언어 예산을 함께 검사한다.
 
 ## OCR
 
@@ -50,6 +51,8 @@ PaddleOCR 모델은 최초 실행 때 내려받으므로 워커에서 미리 모
 기본 EC2 배포 경로는 `requirements-ocr.txt`를 ZIP에 포함하고 worker 노드에서 설치한다.
 `scripts/prepare_ocr.py`가 언어별 모델을 순차 준비하여 manifest를 기록하고 서비스 시작 전
 `--check`로 버전·캐시 준비 상태를 확인한다. 실제 신규 EC2와 샘플 이미지 검증은 별도로 수행한다.
+
+EC2 worker는 `requirements-stt.txt`도 설치하고 서비스 계정으로 `prepare_stt.py`를 실행한다. AMI나 패키지 저장소에서 `ffmpeg`, `ffprobe`를 제공하지 않으면 인스턴스 아키텍처에 맞는 두 Linux 실행 파일을 루트에 담은 ZIP을 릴리스 버킷에 올리고 `FFmpegArchiveKey`, `FFmpegArchiveSha256`을 지정한다.
 
 JPG/JPEG/PNG 형식·실제 이미지 헤더·최대 2500만 픽셀을 검사한다.
 EXIF 방향·RGB·대비를 정규화하고 PDF는 텍스트가 빈 페이지만 렌더링하여 OCR한다.

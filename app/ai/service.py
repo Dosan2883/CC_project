@@ -5,6 +5,7 @@
 """
 import json
 import hashlib
+import os
 import re
 import time
 import uuid
@@ -267,7 +268,8 @@ class TranslationService:
         try:
             chunk_records = [self.cached(target, chunk, source, context) for chunk in chunks]
             missing = [index for index, (_, value) in enumerate(chunk_records) if value is None]
-            reservation_ids = self.reserve(user, len(missing)) if missing else []
+            reservation_ids = self.reserve(user, len(missing), target=target,
+                                           texts=[chunks[index] for index in missing]) if missing else []
             reservation_by_index = dict(zip(missing, reservation_ids))
             output = []
             for index, (chunk_key, value) in enumerate(chunk_records):
@@ -383,7 +385,7 @@ class TranslationService:
         try:
             verify()
             self.authorize_external(user, room if room is not None else (context or {}).get("room"))
-            reservation = self.reserve(user, 1)[0]
+            reservation = self.reserve(user, 1, target=target, texts=[text])[0]
             if before_call is not None:
                 before_call()
             self.mark_attempted(user, [reservation])
@@ -396,12 +398,16 @@ class TranslationService:
             self.release_claim(pk, key, lease)
             raise
 
-    def reserve(self, user, cost=1, *, lease_seconds=RESERVATION_LEASE):
+    def reserve(self, user, cost=1, *, lease_seconds=RESERVATION_LEASE, target=None, texts=()):
         """전체 작업의 한도를 예약한다. 호출을 시작한 조각만 실제 사용량으로 확정한다."""
         if cost <= 0:
             return []
         now = time.time()
         ids = [uuid.uuid4().hex for _ in range(cost)]
+        profile = json.loads(os.getenv("AI_LANGUAGE_LIMITS", "{}")).get(target, {}) if target else {}
+        tokens = [len(text.encode()) + 4000 for text in texts] if target else [0] * cost
+        if len(tokens) != cost:
+            raise ValueError("each translation reservation requires one input size")
 
         def transform(value):
             value = value or {}
@@ -411,7 +417,13 @@ class TranslationService:
                        (entry.get("state") == "attempted" and entry.get("createdAt", 0) > now - QUOTA_WINDOW)]
             if len(legacy) + len(entries) + cost > self.hourly_limit:
                 raise HTTPException(429, "TRANSLATE_LIMIT")
-            entries.extend({"id": item, "state": "reserved", "createdAt": now, "expiresAt": now + lease_seconds} for item in ids)
+            if target:
+                matching = [entry for entry in entries if entry.get("target") == target]
+                if (len(matching) + cost > profile.get("calls", 60) or
+                        sum(entry.get("tokens", 0) for entry in matching) + sum(tokens) > profile.get("tokens", 120000)):
+                    raise HTTPException(429, "AI_LANGUAGE_LIMIT")
+            entries.extend({"id": item, "state": "reserved", "createdAt": now, "expiresAt": now + lease_seconds,
+                            "target":target, "tokens":size} for item, size in zip(ids, tokens))
             return {"calls": legacy, "entries": entries}
 
         self.db.update("TRANSLATE_QUOTA", user.casefold(), transform)

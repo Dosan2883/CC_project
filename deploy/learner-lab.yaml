@@ -28,6 +28,15 @@ Parameters:
     Type: String
     Default: releases/messenger.zip
     AllowedPattern: '[A-Za-z0-9/_.-]+'
+  FFmpegArchiveKey:
+    Type: String
+    Default: ''
+    AllowedPattern: '[A-Za-z0-9/_.-]*'
+    Description: ZIP in ReleaseBucket containing executable Linux ffmpeg and ffprobe at its root.
+  FFmpegArchiveSha256:
+    Type: String
+    Default: ''
+    AllowedPattern: '([a-fA-F0-9]{64})?'
   EnvironmentParameterName:
     Type: String
     Description: Existing SSM SecureString containing the full dotenv configuration with RUN_MEDIA_WORKER=0.
@@ -56,6 +65,12 @@ Parameters:
     Type: String
     Default: ''
     AllowedPattern: '[A-Za-z0-9_.-]*'
+Rules:
+  FFmpegArchiveRequiresChecksum:
+    RuleCondition: !Not [!Equals [!Ref FFmpegArchiveKey, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref FFmpegArchiveSha256, '']]
+        AssertDescription: Set FFmpegArchiveSha256 when supplying a worker ZIP.
 Conditions:
   MonitoringEnabled: !Equals [!Ref EnableMonitoring, '1']
   HasMediaDLQ: !Not [!Equals [!Ref MediaDLQName, '']]
@@ -137,9 +152,11 @@ Resources:
             unzip -q /tmp/messenger.zip -d /opt/messenger
             python3.11 -m venv /opt/messenger/.venv
             /opt/messenger/.venv/bin/pip install -r /opt/messenger/requirements.txt
-            umask 077
-            aws ssm get-parameter --name '${EnvironmentParameterName}' --with-decryption --query Parameter.Value --output text --region ${AWS::Region} > /etc/messenger.env
-            printf '%s\n' '' 'CLOUDWATCH_METRICS=${EnableMonitoring}' 'CLOUDWATCH_NAMESPACE=${MetricsNamespace}' 'AI_DAILY_CALL_LIMIT=${AIDailyCallLimit}' 'AI_ALLOW_PRIVATE_ROOMS=${AIAllowPrivateRooms}' >> /etc/messenger.env
+            (
+              umask 077
+              aws ssm get-parameter --name '${EnvironmentParameterName}' --with-decryption --query Parameter.Value --output text --region ${AWS::Region} > /etc/messenger.env
+              printf '%s\n' '' 'CLOUDWATCH_METRICS=${EnableMonitoring}' 'CLOUDWATCH_NAMESPACE=${MetricsNamespace}' 'AI_DAILY_CALL_LIMIT=${AIDailyCallLimit}' 'AI_ALLOW_PRIVATE_ROOMS=${AIAllowPrivateRooms}' >> /etc/messenger.env
+            )
             chown messenger:messenger /var/lib/messenger
             TOKEN=$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)
             MODE=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/tags/instance/ServiceMode)
@@ -148,8 +165,23 @@ Resources:
               web) COMMAND='-m uvicorn main:app --host 0.0.0.0 --port 8000' ;;
               worker)
                 dnf install -y libgomp mesa-libGL glib2
-                /opt/messenger/.venv/bin/pip install -r /opt/messenger/requirements-ocr.txt
+                if [ -n '${FFmpegArchiveKey}' ]; then
+                  FFMPEG_DIR=$(mktemp -d)
+                  aws s3 cp 's3://${ReleaseBucket}/${FFmpegArchiveKey}' "$FFMPEG_DIR/ffmpeg.zip" --region ${AWS::Region}
+                  printf '%s  %s\n' '${FFmpegArchiveSha256}' "$FFMPEG_DIR/ffmpeg.zip" | sha256sum -c -
+                  unzip -q "$FFMPEG_DIR/ffmpeg.zip" ffmpeg ffprobe -d "$FFMPEG_DIR"
+                  install -m 0755 "$FFMPEG_DIR/ffmpeg" "$FFMPEG_DIR/ffprobe" /usr/local/bin/
+                  rm -f "$FFMPEG_DIR/ffmpeg.zip" "$FFMPEG_DIR/ffmpeg" "$FFMPEG_DIR/ffprobe"
+                  rmdir "$FFMPEG_DIR"
+                elif ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+                  dnf install -y ffmpeg || dnf install -y ffmpeg-free
+                fi
+                /opt/messenger/.venv/bin/pip install -r /opt/messenger/requirements-ocr.txt -r /opt/messenger/requirements-stt.txt
+                if ! grep -Eq '^[[:space:]]*STT_BACKEND=[[:space:]]*[^[:space:]]' /etc/messenger.env; then
+                  printf '%s\n' 'STT_BACKEND=whisper' >> /etc/messenger.env
+                fi
                 runuser -u messenger -- env HOME=/var/lib/messenger PADDLE_PDX_CACHE_HOME=/var/lib/messenger/paddlex PADDLE_HOME=/var/lib/messenger/paddle /opt/messenger/.venv/bin/python /opt/messenger/scripts/prepare_ocr.py
+                systemd-run --wait --pipe --collect --uid=messenger --property=EnvironmentFile=/etc/messenger.env --setenv=HOME=/var/lib/messenger /opt/messenger/.venv/bin/python /opt/messenger/scripts/prepare_stt.py
                 PRECHECK='ExecStartPre=/opt/messenger/.venv/bin/python /opt/messenger/scripts/prepare_ocr.py --check'
                 COMMAND='-m app.media.worker' ;;
               *) exit 1 ;;

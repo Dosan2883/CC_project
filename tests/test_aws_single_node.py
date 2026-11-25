@@ -4,11 +4,11 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import support  # noqa: F401  (테스트용 환경 설정)
 from app.core import config
-from app.core.database import DynamoDatabase
+from app.core.database import Change, DynamoDatabase, SQLiteDatabase, encode
 from app.media.storage import S3Storage
 from scripts import migrate_to_aws, setup_aws
 
@@ -92,6 +92,27 @@ class DynamoQueryTests(unittest.TestCase):
         self.assertEqual(client.queries[0]["KeyConditionExpression"], "pk = :pk")
         self.assertNotIn(":prefix", client.queries[0]["ExpressionAttributeValues"])
         self.assertIn("begins_with", client.queries[1]["KeyConditionExpression"])
+
+    def test_dynamo_range_matches_sqlite_at_both_boundaries(self):
+        def item(key):
+            return {"pk":{"S":"p"}, "sk":{"S":key}, "version":{"N":"1"}, "payload":{"S":encode({"key":key})}}
+
+        client = Mock()
+        client.query.side_effect = [{"Items":[item("a"), item("b")], "LastEvaluatedKey":{"sk":{"S":"b"}}},
+                                    {"Items":[item("c")]}]
+        dynamo = DynamoDatabase("t", client)
+        with tempfile.TemporaryDirectory() as temp:
+            sqlite = SQLiteDatabase(Path(temp) / "ranges.sqlite3")
+            sqlite.commit([Change("p", key, None, {"key":key}) for key in ("a", "b", "c")])
+            self.assertEqual(dynamo.query_range("p", "a", "c"), sqlite.query_range("p", "a", "c"))
+            self.assertEqual(dynamo.query_range("p", "c", "a"), sqlite.query_range("p", "c", "a"))
+            self.assertEqual(dynamo.query_range("p", "c", "c"), sqlite.query_range("p", "c", "c"))
+            for db in (sqlite, dynamo):
+                with self.assertRaises(ValueError):
+                    db.commit([])
+                with self.assertRaises(ValueError):
+                    db.commit([Change("p", "big", None, {"x":"가" * 120_000})])
+        self.assertEqual(client.query.call_count, 2)
 
 
 class StorageTests(unittest.TestCase):

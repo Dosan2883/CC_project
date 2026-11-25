@@ -1,13 +1,15 @@
 """WebSocket 인증, 영속 메시지와 명시적 읽음 갱신."""
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, Path, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import current_user
 from app.core.config import LANGUAGES
 from app.core.runtime import auth, manager, preferences, room_repo, store
 from app.core.runtime import db
-from app.core.database import Conflict
+from app.core.language import detect
+from app.rooms.repository import membership_required, retry_conflicts
 
 router = APIRouter()
 
@@ -19,12 +21,25 @@ class MessageCorrection(BaseModel):
 
 
 @router.patch("/api/rooms/{room_id}/messages/{seq}")
-async def correct_message(room_id: str, seq: int, body: MessageCorrection, user: str = Depends(current_user)):
-    from app.core.language import detect
+async def correct_message(room_id: str, seq: Annotated[int, Path(ge=1)], body: MessageCorrection, user: str = Depends(current_user)):
+    if not body.text.strip():
+        raise HTTPException(422, "EMPTY_MESSAGE")
+    if body.language not in (*LANGUAGES, "auto"):
+        raise HTTPException(422, "INVALID_LANGUAGE")
+    value = await asyncio.to_thread(save_message_correction, room_id, seq, body, user)
+    from app.core.runtime import ai_jobs
+    ai_jobs.queue.wake()
+    await manager.broadcast(room_id, {**value, "type":"message:updated"})
+    return value
+
+
+@retry_conflicts
+def save_message_correction(room_id, seq, body, user):
     from app.ai.refresh import request
     room = room_repo.record(room_id)
-    room_repo.require_member(room_id, user)
     member = db.get("ROOM#" + room_id, "MEMBER#" + user)
+    if not member:
+        raise membership_required(room.value)
     record = db.get("ROOM#" + room_id, f"MESSAGE#{seq:020d}")
     if not record or record.value.get("media"):
         raise HTTPException(404, "MESSAGE_NOT_FOUND")
@@ -32,17 +47,11 @@ async def correct_message(room_id: str, seq: int, body: MessageCorrection, user:
         raise HTTPException(403, "NOT_MESSAGE_OWNER")
     if body.version != record.value.get("revision", 1):
         raise HTTPException(409, "VERSION_CONFLICT")
-    if body.language not in (*LANGUAGES, "auto"):
-        raise HTTPException(422, "INVALID_LANGUAGE")
     detection = detect(body.text)
     value = {**record.value, "bodyCurrent":body.text, "revision":body.version+1,
              "languageDetection":detection, "sourceLanguage":detection["language"] if body.language == "auto" else body.language}
-    try:
-        db.commit([room.change(room.value, check=True), member.change(member.value, check=True), record.change(value),
-                   request(room_id, {"kind":"message", "messageSeq":seq}, body.version+1)])
-    except Conflict:
-        raise HTTPException(409, "VERSION_CONFLICT")
-    await manager.broadcast(room_id, {**value, "type":"message:updated"})
+    db.commit([room.change(room.value, check=True), member.change(member.value, check=True), record.change(value),
+               *request(room_id, {"kind":"message", "messageSeq":seq}, body.version+1)])
     return value
 
 

@@ -1,5 +1,6 @@
 """실제 HTTP/WebSocket을 사용하는 데모 통합 검사. 추가 테스트 의존성은 없다."""
 import json
+from concurrent.futures import ThreadPoolExecutor
 import re
 import socket
 import tempfile
@@ -94,6 +95,33 @@ class DemoIntegrationTests(unittest.TestCase):
         self.assertEqual(self.request(f"/api/rooms/{private}/leave", "POST", token=guest)[0], 200)
         self.assertEqual(len(self.request("/api/rooms", token=guest)[1]), 1)
 
+    def test_password_checks_and_nonmember_room_responses(self):
+        from app.rooms import service
+
+        owner = self.signup("auditOwner")
+        guest = self.signup("auditGuest")
+        self.assertEqual(self.request("/api/auth/signup", "POST", {"nickname":"spaces", "password":"      "})[0], 400)
+        room = {"name":"Audit private room", "visibility":"private", "password":"    "}
+        self.assertEqual(self.request("/api/rooms", "POST", room, owner)[0], 400)
+        _, private = self.request("/api/rooms", "POST", {**room, "password":"a  b"}, owner)
+        room_id = private["roomId"]
+        self.assertEqual(self.request(f"/api/rooms/{room_id}/leave", "POST", token=guest)[0], 404)
+        self.assertEqual(self.request(f"/api/rooms/{room_id}", "DELETE", token=guest)[0], 404)
+        self.assertEqual(self.request(f"/api/rooms/{room_id}/members", token=guest)[0], 404)
+        self.assertEqual(self.request(f"/api/rooms/{room_id}/read", "POST", {"lastReadSeq":0}, guest)[0], 404)
+        self.room(owner, "Audit public room")
+        with patch.object(service, "hash_password", wraps=service.hash_password) as hashed:
+            for name in ("Audit nonexistent", "Audit public room", room["name"]):
+                self.assertEqual(self.request("/api/rooms/enter-private", "POST", {"name":name, "password":"wrong"}, guest)[0], 403)
+            self.assertEqual(hashed.call_count, 3)
+            for name, password in (("x" * 101, "wrong"), (room["name"], "x" * 129)):
+                self.assertEqual(self.request("/api/rooms/enter-private", "POST", {"name":name, "password":password}, guest)[0], 422)
+            self.assertEqual(hashed.call_count, 3)
+        self.assertEqual(self.request("/api/rooms/enter-private", "POST", {"name":room["name"], "password":"a  b"}, guest)[0], 200)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            statuses = list(pool.map(lambda _: self.request("/api/auth/login", "POST", {"nickname":"auditOwner", "password":"wrong"})[0], range(8)))
+        self.assertEqual(sorted(statuses), [401] * 5 + [429] * 3)
+
     def test_chat_and_reconnect_history(self):
         token = self.signup("chatter")
         room = self.room(token, "Chat room")
@@ -159,6 +187,11 @@ class DemoIntegrationTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertTrue(content)
         self.assertEqual(self.request("/api/languages")[1], ["ko", "en", "ja", "zh-CN", "es", "fr"])
+        with urlopen(self.base + "/api/languages", timeout=5) as response:
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+            self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
 
     def test_preferences_and_explicit_read_receipts(self):
         token = self.signup("reader")

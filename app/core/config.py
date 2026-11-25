@@ -13,10 +13,11 @@ BACKEND = os.getenv("DATA_BACKEND", "sqlite")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 DYNAMODB_TABLE = os.getenv("DYNAMODB_TABLE", "")
 S3_BUCKET = os.getenv("S3_BUCKET", "")
-MEDIA_QUEUE_URL = os.getenv("MEDIA_QUEUE_URL", "")
-REDIS_URL = os.getenv("REDIS_URL", "")
 # 서버 한 대(SINGLE_NODE=1)는 DynamoDB와 S3만 쓰고 SQS·Redis 없이 한 프로세스가 워커까지 돌린다. 여러 대는 아래 네 가지가 모두 필요하다.
 SINGLE_NODE = os.getenv("SINGLE_NODE", "0") == "1"
+MEDIA_QUEUE_URL = "" if SINGLE_NODE else os.getenv("MEDIA_QUEUE_URL", "")
+REDIS_URL = "" if SINGLE_NODE else os.getenv("REDIS_URL", "")
+AI_QUEUE_URL = "" if SINGLE_NODE else os.getenv("AI_QUEUE_URL", "")
 RUN_MEDIA_WORKER = os.getenv("RUN_MEDIA_WORKER", "1" if BACKEND == "sqlite" or SINGLE_NODE else "0") == "1"
 # 번역(AWS Lambda 함수 URL). 비워 두면 번역 API가 503을 돌려주고 나머지 기능은 그대로 동작한다.
 TRANSLATE_URL = os.getenv("TRANSLATE_URL", "")

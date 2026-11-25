@@ -8,6 +8,8 @@ AWS에서는 같은 인터페이스(put/get)를 가진 S3Storage(boto3)로 교�
   extracted/{mediaId}.json    추출된 텍스트(페이지별)
 """
 from pathlib import Path
+import os
+from tempfile import NamedTemporaryFile
 
 
 class LocalStorage:
@@ -25,7 +27,18 @@ class LocalStorage:
     def put(self, key: str, data: bytes) -> None:
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        with NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                stream.write(data)
+                stream.close()
+                os.replace(temporary, path)
+            finally:
+                stream.close()
+                temporary.unlink(missing_ok=True)
+
+    def delete(self, key):
+        self._path(key).unlink(missing_ok=True)
 
     def get(self, key: str) -> bytes:
         return self._path(key).read_bytes()
@@ -66,6 +79,9 @@ class S3Storage:
     def put(self, key, data):
         self.client.put_object(Bucket=self.bucket, Key=key, Body=data)
 
+    def delete(self, key):
+        self.client.delete_object(Bucket=self.bucket, Key=key)
+
     def get(self, key):
         response = self.client.get_object(Bucket=self.bucket, Key=key)
         with response["Body"] as body:
@@ -81,7 +97,16 @@ class S3Storage:
             raise
 
     def get_limited(self, key, limit):
-        response = self.client.get_object(Bucket=self.bucket, Key=key, Range=f"bytes=0-{limit}")
+        from botocore.exceptions import ClientError
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=key, Range=f"bytes=0-{limit}")
+        except ClientError as error:
+            code = error.response["Error"]["Code"]
+            if code in ("404", "NoSuchKey", "NotFound"):
+                raise FileNotFoundError(key) from error
+            if code == "InvalidRange" and self.size(key) == 0:
+                return b""
+            raise
         with response["Body"] as body:
             return body.read(limit + 1)
 

@@ -1,11 +1,21 @@
-const languageOptionsReady = fetch("/api/languages").then(r => { if (!r.ok) throw new Error("languages unavailable"); return r.json(); }).then(list => {
-  const opts = list.map(c => `<option value="${c}">${LANG_NAMES[c]}</option>`).join("");
-  for (const id of ["tgtLang", "prefTarget"]) $(id).innerHTML = opts;
-  $("srcLang").innerHTML = $("prefSource").innerHTML = '<option value="auto">자동 판별</option>' + opts;
-  $("prefUiLocale").innerHTML = ["ko", "en", "ja"].map(c => `<option value="${c}">${LANG_NAMES[c]}</option>`).join("");
+function setLanguageOptions(list) {
+  const options = codes => codes.map(code => new Option(LANG_NAMES[code], code));
+  for (const id of ["tgtLang", "prefTarget"]) $(id).replaceChildren(...options(list));
+  for (const id of ["srcLang", "prefSource"]) $(id).replaceChildren(new Option("자동 판별", "auto"), ...options(list));
+  $("prefUiLocale").replaceChildren(...options(["ko", "en", "ja"]));
   const def = ["ko","en","ja"].includes(locale) ? locale : "ko";
   $("srcLang").value = def; $("tgtLang").value = targetLang = def;
-});
+}
+setLanguageOptions(Object.keys(LANG_NAMES));
+let languageOptionsReady;
+function loadLanguageOptions() {
+  return languageOptionsReady ??= api("/api/languages", "GET", undefined, {timeout:2000, authToken:null})
+    .then(list => {
+      const supported = Array.isArray(list) ? list.filter(code => Object.hasOwn(LANG_NAMES, code)) : [];
+      if (supported.length) setLanguageOptions(supported);
+    })
+    .catch(() => { languageOptionsReady = undefined; });
+}
 applyI18n();
 // 왼쪽 아이콘 레일: 기존 버튼을 대신 눌러 준다.
 $("railChats").onclick = toggleSideList;
@@ -37,5 +47,13 @@ document.addEventListener("click", event => { if (!settingsPop.hidden && !settin
 document.addEventListener("keydown", event => { if (event.key === "Escape") settingsPop.hidden = true; });
 $("railLogout").onclick = () => { settingsPop.hidden = true; $("logout").click(); };
 // 같은 탭에서 새로고침해도 로그인이 유지되도록, 저장된 토큰이 아직 유효한지 확인한다.
-token = tokenStore.get();
-if (token) api("/api/auth/me").then(r => startSession(token, r.nickname)).catch(() => { token = null; tokenStore.set(null); });
+purgeLegacyOutboxes();
+const savedToken = tokenStore.get(), resumeGeneration = authGeneration;
+if (savedToken) {
+  const resumeStillCurrent = () => authGeneration === resumeGeneration && !token && tokenStore.get() === savedToken;
+  api("/api/auth/me", "GET", undefined, {authToken:savedToken})
+    .then(r => { if (resumeStillCurrent()) return startSession(savedToken, r.nickname, resumeGeneration); })
+    .catch(error => {
+      if (resumeStillCurrent() && error.status === 401) { clearOutbox(); tokenStore.set(null); }
+    });
+}

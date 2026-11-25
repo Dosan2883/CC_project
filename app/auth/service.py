@@ -69,7 +69,7 @@ class AuthService:
         nick = nickname.strip()
         if not NICK_RE.fullmatch(nick):
             raise AuthError(400, "INVALID_NICKNAME")
-        if not 6 <= len(password) <= 64:
+        if not 6 <= len(password) <= 64 or not password.strip():
             raise AuthError(400, "INVALID_PASSWORD")
         salt = os.urandom(16)
         record = {"nickname": nick, "salt": salt, "iterations": PBKDF2_ITERATIONS,
@@ -86,16 +86,19 @@ class AuthService:
 
     def login(self, nickname: str, password: str) -> tuple[str, str]:
         key = nickname.strip().casefold()
-        if self.throttle.blocked(key):
+        if len(nickname) > 64 or len(password) > 128:
+            raise AuthError(422, "INVALID_CREDENTIALS")
+        attempt = self.throttle.reserve(key)
+        if attempt is None:
             raise AuthError(429, "TOO_MANY_ATTEMPTS")
         acct = self.repo.get(key)
         # 없는 닉네임도 같은 계산을 거쳐서, 응답 시간으로 가입 여부를 알아내지 못하게 한다.
         digest = hash_password(password, acct["salt"] if acct else _DUMMY_SALT,
                                acct["iterations"] if acct else PBKDF2_ITERATIONS)
-        if not acct or not hmac.compare_digest(digest, acct["pwHash"]):
-            self.throttle.fail(key)
+        valid = hmac.compare_digest(digest, acct["pwHash"] if acct else bytes(32)) and acct is not None
+        self.throttle.finish(key, attempt, valid)
+        if not valid:
             raise AuthError(401, "INVALID_CREDENTIALS")  # 닉네임 오류와 비밀번호 오류를 구분하지 않는다
-        self.throttle.clear(key)
         return acct["nickname"], self.signer.issue(acct["nickname"])
 
     def verify(self, token: str | None) -> str | None:

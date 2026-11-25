@@ -54,7 +54,19 @@ class Database:
         raise Conflict("concurrent update retry limit")
 
     def query_range(self, pk, lower, upper):
-        return [record for record in self.query(pk, lower) if record.sk < upper]
+        raise NotImplementedError
+
+    @staticmethod
+    def prepare_changes(changes):
+        prepared = []
+        for change in changes:
+            payload = None if change.check or change.value is None else encode(change.value)
+            if payload is not None and len(payload.encode()) > 350_000:
+                raise ValueError("record exceeds DynamoDB payload limit")
+            prepared.append((change, payload))
+        if not prepared:
+            raise ValueError("commit requires at least one change")
+        return prepared
 
 
 class SQLiteDatabase(Database):
@@ -93,9 +105,10 @@ class SQLiteDatabase(Database):
         return [Record(pk, sk, decode(payload), version) for sk, version, payload in rows]
 
     def commit(self, changes):
+        prepared = self.prepare_changes(changes)
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            for change in changes:
+            for change, payload in prepared:
                 row = connection.execute("SELECT version FROM records WHERE pk=? AND sk=?", (change.pk, change.sk)).fetchone()
                 if (row[0] if row else None) != change.expected:
                     raise Conflict()
@@ -104,7 +117,7 @@ class SQLiteDatabase(Database):
                 if change.value is None:
                     connection.execute("DELETE FROM records WHERE pk=? AND sk=?", (change.pk, change.sk))
                 else:
-                    connection.execute("INSERT OR REPLACE INTO records VALUES (?, ?, ?, ?)", (change.pk, change.sk, (change.expected or 0) + 1, encode(change.value)))
+                    connection.execute("INSERT OR REPLACE INTO records VALUES (?, ?, ?, ?)", (change.pk, change.sk, (change.expected or 0) + 1, payload))
 
     def ping(self):
         with self.connect() as connection:
@@ -137,6 +150,10 @@ class DynamoDatabase(Database):
             args["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
     def query_range(self, pk, lower, upper):
+        if lower >= upper:
+            return []
+        if not lower:
+            return [record for record in self.query(pk) if record.sk < upper]
         args = dict(
             TableName=self.table_name,
             KeyConditionExpression="pk = :pk AND sk BETWEEN :lower AND :upper",
@@ -148,14 +165,14 @@ class DynamoDatabase(Database):
         records = []
         while True:
             response = self.client.query(**args)
-            records.extend(self.record(item) for item in response.get("Items", []))
+            records.extend(self.record(item) for item in response.get("Items", []) if item["sk"]["S"] < upper)
             if not response.get("LastEvaluatedKey"):
                 return records
             args["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
     def commit(self, changes):
         actions = []
-        for change in changes:
+        for change, payload in self.prepare_changes(changes):
             key = {"pk": {"S": change.pk}, "sk": {"S": change.sk}}
             args = dict(TableName=self.table_name, ConditionExpression="attribute_not_exists(pk)" if change.expected is None else "#version = :version")
             if change.expected is not None:
@@ -165,9 +182,6 @@ class DynamoDatabase(Database):
             elif change.value is None:
                 actions.append({"Delete": {**args, "Key": key}})
             else:
-                payload = encode(change.value)
-                if len(payload.encode()) > 350_000:
-                    raise ValueError("record exceeds DynamoDB payload limit")
                 actions.append({"Put": {**args, "Item": {**key, "version": {"N": str((change.expected or 0) + 1)}, "payload": {"S": payload}}}})
         try:
             self.client.transact_write_items(TransactItems=actions)

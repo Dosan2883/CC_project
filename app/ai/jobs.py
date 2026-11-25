@@ -1,6 +1,7 @@
 """Durable AI selections, leased execution, retry and evidence results."""
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -10,11 +11,14 @@ import threading
 from fastapi import HTTPException
 from app.core.database import Change, Conflict
 from app.core import metrics
-from app.media.queue import MediaWorker
+from app.media.queue import MediaWorker, pending_job_change
 from app.media.service import MediaError
 from app.ai.contract import MODEL_VERSION
 from app.ai.service import LANGUAGE_NAMES, MAX_CHARS, MAX_PAGE_CHARS, split_text, text_matches_language
 from app.ai.artifacts import Artifacts, digest
+from app.rooms.repository import retry_conflicts
+
+log = logging.getLogger(__name__)
 
 SUMMARY_CACHE_VERSION = "2"  # 요약 프롬프트나 방식을 크게 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
 
@@ -133,7 +137,21 @@ class AIJobs:
         stable = [AIJobs.hashable_evidence(item) for item in evidence]
         return hashlib.sha256(json.dumps(stable, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
-    def submit(self, body, user):
+    def require_room_member(self, room, user):
+        try:
+            return self.rooms.require_member(room, user)
+        except HTTPException as error:
+            if error.status_code not in (403, 404):
+                raise
+            raise HTTPException(404, "ROOM_NOT_FOUND") from error
+
+    def require_visible(self, room, job_id):
+        if self.db.get("AI_RESULT_HIDDEN#" + room, job_id):
+            raise HTTPException(404, "SUMMARY_NOT_FOUND")
+
+    @retry_conflicts
+    def submit(self, body, user, *, restore_hidden=True, retry_pending=False):
+        self.require_room_member(body["roomId"], user)
         body = {**body, "sources": sorted([{**s, "startChar":s.get("startChar", 0)} for s in body["sources"]], key=lambda s:json.dumps(s, sort_keys=True))}
         if not body["consent"]:
             raise HTTPException(422, "CONSENT_REQUIRED")
@@ -145,10 +163,10 @@ class AIJobs:
                     asset = self.media.live_asset(source["mediaId"])
                 except MediaError as error:
                     raise HTTPException(error.status, error.code)
-                self.rooms.require_member(body["roomId"], user)
                 if asset["roomId"] != body["roomId"]:
                     raise HTTPException(404, "MEDIA_NOT_FOUND")
                 if not asset.get("transcriptKey"):
+                    self.translation.authorize_external(user, body["roomId"])
                     self.media.start_job(source["mediaId"])
                     raise HTTPException(409, "EXTRACTION_PENDING")
         try:
@@ -166,13 +184,24 @@ class AIJobs:
         previous = self.db.get("AI_JOBS", job_id)
         if previous and saved is not None:
             if previous.value["status"] != "COMPLETED":
-                self.db.update("AI_JOBS", job_id, lambda value: {**value, "status":"COMPLETED", "resultKey":result_key, "leaseUntil":0})
-            self.index(self.db.get("AI_JOBS", job_id).value)
+                self.artifacts.reconcile_saved(identity, result_key)
+                self.db.update("AI_JOBS", job_id, lambda value: {**value, "status":"COMPLETED", "resultKey":result_key, "leaseUntil":0,
+                               "errorCode":None, "errorStatus":None, "deadLetter":False})
+            self.index(self.db.get("AI_JOBS", job_id).value, restore_hidden=restore_hidden)
             result = {**self.get(job_id, user), "cached":True}
             if body["kind"] != "translate":
                 result.update({"existing":True, "entryId":job_id})
             return result
-        if previous and saved is None and previous.value["status"] != "COMPLETED":
+        if previous and previous.value["status"] in ("PENDING", "PROCESSING", "FAILED"):
+            self.translation.authorize_external(user, body["roomId"])
+            if previous.value["status"] == "FAILED" and previous.value.get("errorCode") not in (
+                "AI_CALL_UNCERTAIN", "SOURCE_VERSION_CHANGED", "AI_TOTAL_CALL_LIMIT",
+            ):
+                return self.retry(job_id, user, strict=False)
+            if retry_pending and previous.value["status"] == "PENDING" and (previous.value.get("errorStatus") or 0) >= 500:
+                updated = {**previous.value, "requester":user, "availableAt":0, "errorCode":None, "errorStatus":None}
+                self.db.commit([previous.change(updated), pending_job_change(self.db, "AI_JOBS", job_id)])
+                self.enqueue(job_id)
             return self.get(job_id, user)
         created_at = int(time.time() * 1000)
         custom_title = " ".join(str(body.get("title") or "").split())[:60]
@@ -187,28 +216,33 @@ class AIJobs:
             if legacy is not None:
                 saved, _ = self.artifacts.run(identity, result_key, lambda:legacy, lambda:self.rooms.require_member(body["roomId"], user))
                 job["cached"] = True
-        if saved is None and not self.translation.translator.configured:
-            raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
+        if saved is None:
+            self.translation.authorize_external(user, body["roomId"])
+            if not self.translation.translator.configured:
+                raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
         if saved is not None:
             job["status"] = "COMPLETED"
         room = self.rooms.record(body["roomId"])
         member = self.db.get("ROOM#" + body["roomId"], "MEMBER#" + user)
         if not member:
-            raise HTTPException(403, "NOT_A_MEMBER")
+            raise HTTPException(404, "ROOM_NOT_FOUND")
+        changes = [room.change(room.value, check=True), member.change(member.value, check=True),
+                   Change("AI_JOBS", job_id, previous.version if previous else None, job)]
+        if saved is None:
+            changes.append(pending_job_change(self.db, "AI_JOBS", job_id))
         try:
-            self.db.commit([room.change(room.value, check=True), member.change(member.value, check=True), Change("AI_JOBS", job_id, previous.version if previous else None, job)])
+            self.db.commit(changes)
         except Conflict:
-            return self.get(job_id, user)
+            if self.db.get("AI_JOBS", job_id):
+                return self.get(job_id, user)
+            raise
         if saved is not None:
-            self.index(job)
+            self.index(job, restore_hidden=restore_hidden)
             result = self.get(job_id, user)
             if body["kind"] != "translate":
                 result["existing"] = True
             return result
-        try:
-            self.queue.send(job_id)
-        except Exception:
-            pass  # durable recovery republishes pending records
+        self.enqueue(job_id)
         return self.get(job_id, user)
 
     def get(self, job_id, user):
@@ -220,10 +254,12 @@ class AIJobs:
             self.rooms.require_member(job["roomId"], user)
         except HTTPException:
             raise HTTPException(404, "JOB_NOT_FOUND")
+        if job.get("kind") != "translate":
+            self.require_visible(job["roomId"], job_id)
         current = self.select(job["roomId"], job["sources"], user)
         if self.digest(current) != job["sourceHash"]:
             raise HTTPException(409, "SOURCE_VERSION_CHANGED")
-        result = {k: v for k, v in job.items() if k not in ("evidence", "leaseToken", "consent", "identity")}
+        result = {k: v for k, v in job.items() if k not in ("evidence", "leaseToken", "consent", "identity", "retryUncertain")}
         if job.get("kind") != "translate":
             result["entryId"] = job_id
             result["title"] = job.get("title") or self.default_title(job)
@@ -251,19 +287,29 @@ class AIJobs:
         folder = "translations" if body["kind"] == "translate" else "summaries"
         return f"{prefix}/{folder}/{result_id}/result.json"
 
-    def index(self, job):
+    def index_change(self, job, record):
         keys = ("jobId", "resultId", "roomId", "kind", "target", "sourceLanguage", "sources", "sourceHash", "sourceVersions", "resultKey", "createdAt", "updatedAt", "title", "requester")
         value = {k:job.get(k) for k in keys}
         value["sourceVersions"] = value["sourceVersions"] or [{"source":e["source"], "version":e.get("version", 1)} for e in job.get("evidence", [])]
         value["title"] = value["title"] or self.default_title(job)
         value["updatedAt"] = value["updatedAt"] or value["createdAt"]
-        self.db.update("ROOM_RESULTS#" + job["roomId"], job["jobId"], lambda _: value)
-        hidden = self.db.get("AI_RESULT_HIDDEN#" + job["roomId"], job["jobId"])
-        if hidden:
-            self.db.commit([Change(hidden.pk, hidden.sk, hidden.version, None)])
+        return Change("ROOM_RESULTS#" + job["roomId"], job["jobId"], record.version if record else None, value)
+
+    @retry_conflicts
+    def index(self, job, *, restore_hidden=False):
+        room, job_id = job["roomId"], job["jobId"]
+        hidden = self.db.get("AI_RESULT_HIDDEN#" + room, job_id)
+        if hidden and not restore_hidden:
+            return
+        current = self.db.get("AI_JOBS", job_id)
+        if not current or current.value.get("status") != "COMPLETED":
+            return
+        record = self.db.get("ROOM_RESULTS#" + room, job_id)
+        guard = hidden.change(None) if hidden else Change("AI_RESULT_HIDDEN#" + room, job_id, None, None, check=True)
+        self.db.commit([self.index_change(current.value, record), current.change(current.value, check=True), guard])
 
     def list_results(self, room, user):
-        self.rooms.require_member(room, user)
+        self.require_room_member(room, user)
         hidden = {record.sk for record in self.db.query("AI_RESULT_HIDDEN#" + room)}
         with self._migration_lock:
             if room not in self._migrated_rooms:
@@ -333,7 +379,8 @@ class AIJobs:
         return self._version_signature(saved) == self._version_signature(current)
 
     def read_summary(self, room, entry_id, user):
-        self.rooms.require_member(room, user)
+        self.require_room_member(room, user)
+        self.require_visible(room, entry_id)
         job = self.db.get("AI_JOBS", entry_id)
         if not job or job.value.get("roomId") != room or job.value.get("kind") == "translate":
             raise HTTPException(404, "SUMMARY_NOT_FOUND")
@@ -341,38 +388,73 @@ class AIJobs:
         try:
             result = self.get(entry_id, user).get("result")
         except HTTPException as error:
-            if error.status_code not in (404, 409, 422) or job.value.get("status") != "COMPLETED":
+            if error.detail == "SUMMARY_NOT_FOUND" or error.status_code not in (404, 409, 422) or job.value.get("status") != "COMPLETED":
                 raise
+            self.require_room_member(room, user)
             raw = json.loads(self.media.storage.get(job.value["resultKey"]))
             result, stale = raw.get("result", raw), True
         return {"entryId":entry_id, "title":job.value.get("title") or self.default_title(job.value),
                 "result":result, "stale":stale, "sources":job.value.get("sources", [])}
 
+    @retry_conflicts
     def rename_summary(self, room, entry_id, title, user):
-        self.rooms.require_member(room, user)
+        self.require_room_member(room, user)
+        self.require_visible(room, entry_id)
         title = " ".join(str(title or "").split())[:60]
         if not title:
             raise HTTPException(422, "TITLE_REQUIRED")
         record = self.db.get("AI_JOBS", entry_id)
-        if not record or record.value.get("roomId") != room or record.value.get("kind") == "translate":
+        if not record or record.value.get("roomId") != room or record.value.get("kind") == "translate" or record.value.get("status") != "COMPLETED":
             raise HTTPException(404, "SUMMARY_NOT_FOUND")
         if record.value.get("requester") != user:
             raise HTTPException(403, "NOT_SUMMARY_OWNER")
         updated_at = int(time.time() * 1000)
-        updated = self.db.update("AI_JOBS", entry_id, lambda value: {**value, "title":title, "updatedAt":updated_at})
-        self.index(updated)
+        updated = {**record.value, "title":title, "updatedAt":updated_at}
+        indexed = self.db.get("ROOM_RESULTS#" + room, entry_id)
+        self.db.commit([record.change(updated), self.index_change(updated, indexed),
+                        Change("AI_RESULT_HIDDEN#" + room, entry_id, None, None, check=True)])
         return {"entryId":entry_id, "title":title}
 
+    @retry_conflicts
     def delete_summary(self, room, entry_id, user):
-        self.rooms.require_member(room, user)
+        self.require_room_member(room, user)
         record = self.db.get("ROOM_RESULTS#" + room, entry_id)
         if not record or record.value.get("kind") == "translate":
             raise HTTPException(404, "SUMMARY_NOT_FOUND")
         if record.value.get("requester") != user:
             raise HTTPException(403, "NOT_SUMMARY_OWNER")
-        self.db.update("AI_RESULT_HIDDEN#" + room, entry_id, lambda _: {"entryId":entry_id, "deletedAt":int(time.time() * 1000)})
-        self.db.commit([Change(record.pk, record.sk, record.version, None)])
+        self.db.commit([record.change(None), Change("AI_RESULT_HIDDEN#" + room, entry_id, None,
+                        {"entryId":entry_id, "deletedAt":int(time.time() * 1000)})])
         return {"entryId":entry_id, "deleted":True}
+
+    def retry(self, job_id, user, *, strict=True):
+        self.get(job_id, user)
+        record = self.db.get("AI_JOBS", job_id)
+        self.translation.authorize_external(user, record.value["roomId"])
+        if not self.translation.translator.configured:
+            raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
+        if self.reset_failed_job(job_id, user, strict):
+            self.enqueue(job_id)
+        return self.get(job_id, user)
+
+    def enqueue(self, job_id):
+        try:
+            self.queue.send(job_id)
+        except Exception:
+            log.exception("AI job notification failed; pending job remains durable")
+
+    @retry_conflicts
+    def reset_failed_job(self, job_id, user, strict):
+        record = self.db.get("AI_JOBS", job_id)
+        if record.value["status"] != "FAILED":
+            if strict:
+                raise HTTPException(409, "JOB_NOT_FAILED")
+            return False
+        value = {**record.value, "requester":user, "status":"PENDING", "attempts":0, "availableAt":0,
+                 "leaseUntil":0, "leaseToken":None, "deadLetter":False, "errorCode":None, "errorStatus":None,
+                 "retryUncertain":strict and record.value.get("errorCode") == "AI_CALL_UNCERTAIN"}
+        self.db.commit([record.change(value), pending_job_change(self.db, "AI_JOBS", job_id)])
+        return True
 
     def sync_translation(self, source, room, target, user):
         # Legacy endpoints and asynchronous buttons share the exact result identity.
@@ -389,17 +471,16 @@ class AIJobs:
             raise
         if len(evidence[0]["text"]) > (MAX_CHARS if source["kind"] == "message" else MAX_PAGE_CHARS):
             raise HTTPException(422, "TEXT_TOO_LONG" if source["kind"] == "message" else "PAGE_TOO_LONG")
-        job = self.submit({"roomId":room, "kind":"translate", "sourceLanguage":"auto", "target":target, "sources":[source], "consent":True}, user)
+        job = self.submit({"roomId":room, "kind":"translate", "sourceLanguage":"auto", "target":target,
+                           "sources":[source], "consent":True}, user, retry_pending=True)
         cached = bool(job.get("cached"))
         if not cached and not self.translation.translator.configured:
             raise HTTPException(503, "TRANSLATION_NOT_CONFIGURED")
-        if job.get("errorCode") and job["errorCode"] != "AI_CALL_UNCERTAIN":
-            self.db.update("AI_JOBS", job["jobId"], lambda value: {**value, "requester":user, "status":"PENDING", "attempts":0, "errorCode":None, "availableAt":0, "leaseUntil":0})
-            job = self.get(job["jobId"], user)
         deadline = time.monotonic() + 30
         while job["status"] != "COMPLETED":
             if job.get("errorCode"):
-                raise HTTPException(job.get("errorStatus", 502), "TRANSLATION_UNAVAILABLE" if job.get("errorStatus",502) == 502 else job["errorCode"])
+                status = job.get("errorStatus") or 502
+                raise HTTPException(status, "TRANSLATION_UNAVAILABLE" if status == 502 else job["errorCode"])
             self.work(job["jobId"])
             job = self.get(job["jobId"], user)
             if job["status"] == "COMPLETED":
@@ -533,7 +614,8 @@ class AIJobs:
                     raise HTTPException(422, "AI_TOTAL_CALL_LIMIT")
                 return {**value, "callsUsed":value.get("callsUsed", 0)+1}
             self.db.update("AI_JOBS", job["jobId"], count)
-            self.budget(job, text)
+            if job["kind"] != "translate":
+                self.budget(job, text)
 
         def generate(text, label, translation_context=None):
             self.get(job["jobId"], job["requester"])
@@ -555,7 +637,8 @@ class AIJobs:
                 self.translation.authorize_external(job["requester"], job["roomId"])
                 record_call(text)
                 return {"text":check(self.translation.translator.summarize(text, LANGUAGE_NAMES[job["target"]]))}
-            result, cached_artifact = self.artifacts.run(identity, key, call, lambda:self.get(job["jobId"], job["requester"]))
+            result, cached_artifact = self.artifacts.run(identity, key, call, lambda:self.get(job["jobId"], job["requester"]),
+                                                         allow_uncertain=job.get("retryUncertain", False))
             if job["kind"] == "translate":
                 flags = result.get("flags", {})
                 translation_flags.append({**flags, "cached":bool(flags.get("cached") or cached_artifact)})
@@ -597,7 +680,9 @@ class AIJobs:
                 pass
             return False
         lease = uuid.uuid4().hex
-        job = {**job, "status": "PROCESSING", "leaseToken": lease, "leaseUntil": time.time() + 180, "attempts": job["attempts"] + 1}
+        retry_uncertain = job.get("retryUncertain", False)
+        job = {**job, "status": "PROCESSING", "leaseToken": lease, "leaseUntil": time.time() + 180,
+               "attempts": job["attempts"] + 1, "errorCode":None, "errorStatus":None, "retryUncertain":False}
         try:
             self.db.commit([record.change(job)])
         except Conflict:
@@ -618,16 +703,14 @@ class AIJobs:
             if "identity" not in job:  # recover a durable pre-migration pending job
                 job["identity"] = {"legacyJob":job_id, "sourceHash":job["sourceHash"], "target":job["target"]}
                 job["resultKey"] = self.result_key(job, job_id)
-            result, cached = self.artifacts.run(job["identity"], job["resultKey"], lambda:self.produce(job), lambda:self.get(job_id, job["requester"]))
-            self.finish(job_id, lease, {"status": "COMPLETED", "resultKey": job["resultKey"], "leaseUntil": 0, "cached":cached})
-            if job["attempts"] > 1:
-                metrics.record("RetrySuccesses", Queue="AI")
-            self.index(job)
-            self.media.on_event(job["roomId"], {"type":"ai:updated", "jobId":job_id})
-            return True
+            job["retryUncertain"] = retry_uncertain
+            result, cached = self.artifacts.run(job["identity"], job["resultKey"], lambda:self.produce(job),
+                                                lambda:self.get(job_id, job["requester"]), allow_uncertain=retry_uncertain)
+            self.finish(job_id, lease, {"status": "COMPLETED", "resultKey": job["resultKey"], "leaseUntil": 0,
+                        "cached":cached, "errorCode":None, "errorStatus":None})
         except Exception as error:
             terminal = isinstance(error, HTTPException) and (
-                error.status_code in (403, 404, 409, 422) or error.detail == "AI_DAILY_CALL_LIMIT"
+                error.status_code in (403, 404, 409, 422, 429)
             )
             failed = terminal or job["attempts"] >= 3
             self.finish(job_id, lease, {"status": "FAILED" if failed else "PENDING", "leaseUntil": 0,
@@ -640,6 +723,17 @@ class AIJobs:
         finally:
             stop.set()
             thread.join(timeout=1)
+        if job["attempts"] > 1:
+            metrics.record("RetrySuccesses", Queue="AI")
+        try:
+            self.index(job)
+        except Exception:
+            log.exception("AI result index update failed; the saved result remains available")
+        try:
+            self.media.on_event(job["roomId"], {"type":"ai:updated", "jobId":job_id})
+        except Exception:
+            log.exception("AI result notification failed")
+        return True
 
     def finish(self, job_id, lease, changes):
         def update(value):

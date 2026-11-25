@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from app.core import metrics
 from app.core.database import Change, Conflict
 from app.media.extractors import ExtractError, extract
-from app.media.queue import MediaWorker
+from app.media.queue import MediaWorker, pending_job_change
 from app.rooms.repository import retry_conflicts
 
 log = logging.getLogger(__name__)
@@ -107,15 +107,26 @@ class MediaService:
             raise MediaError(404, "MEDIA_NOT_FOUND")
         return asset
 
+    @retry_conflicts
     def delete_file(self, media_id, user):
         """올린 사람만 지울 수 있다. 논리 삭제라서 원본과 추출 결과 파일은 저장소에 보관한다."""
         asset = self.asset(media_id)
-        self.rooms.require_member(asset["roomId"], user)
+        try:
+            room = self.rooms.record(asset["roomId"])
+        except HTTPException as error:
+            raise MediaError(404, "MEDIA_NOT_FOUND") from error
+        room_key = "ROOM#" + asset["roomId"]
+        member = self.db.get(room_key, "MEMBER#" + user)
+        if not member:
+            raise MediaError(404, "MEDIA_NOT_FOUND")
         if asset.get("uploader") != user:
             raise MediaError(403, "NOT_FILE_OWNER")
-        self.db.update("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + media_id,
-                       lambda value: value or {"mediaId": media_id, "deletedBy": user, "deletedAt": int(time.time() * 1000)})
-        self.emit(asset)
+        marker = "MEDIA_DELETED#" + media_id
+        if not self.db.get(room_key, marker):
+            deleted = {"mediaId":media_id, "deletedBy":user, "deletedAt":int(time.time() * 1000)}
+            self.db.commit([room.change(room.value, check=True), member.change(member.value, check=True),
+                            Change(room_key, marker, None, deleted)])
+            self.emit(asset)
         return {"mediaId": media_id, "status": "DELETED"}
 
     @retry_conflicts
@@ -182,7 +193,9 @@ class MediaService:
         if not member or asset["uploader"] != user:
             raise MediaError(403, "NOT_THE_UPLOADER")
         if asset["status"] != "UPLOADING":
-            return asset
+            message_ref = self.db.get("ROOM#" + asset["roomId"], "MEDIA_MESSAGE#" + media_id)
+            message = self.db.get("ROOM#" + asset["roomId"], f'MESSAGE#{message_ref.value["messageSeq"]:020d}') if message_ref else None
+            return asset, message.value if message else None, False
         if time.time() > asset["uploadExpiresAt"]:
             raise MediaError(403, "INVALID_OR_EXPIRED_TOKEN")
         try:
@@ -204,7 +217,7 @@ class MediaService:
             Change("ROOM#" + asset["roomId"], "MEDIA_MESSAGE#" + media_id, None, {"messageSeq": seq}),
         ])
         self.emit(asset)
-        return asset
+        return asset, message, True
 
     @staticmethod
     def new_job(asset):
@@ -239,7 +252,8 @@ class MediaService:
             job["ocrLanguage"] = language
         self.db.commit([room.change(room.value, check=True), record.change({**asset, "jobId": media_id}),
                         Change("ROOM#" + asset["roomId"], "MEDIA_DELETED#" + media_id, None, None, check=True),
-                        Change("MEDIA_JOBS", media_id, previous.version if previous else None, job)])
+                        Change("MEDIA_JOBS", media_id, previous.version if previous else None, job),
+                        pending_job_change(self.db, "MEDIA_JOBS", media_id)])
         self.emit(asset)
         self.enqueue(media_id)
         return job
@@ -273,8 +287,18 @@ class MediaService:
         return result
 
     def original(self, media_id):
-        asset = self.asset(media_id)
-        raw = self.storage.get_limited(asset["s3Key"], MAX_BYTES)
+        asset = self.live_asset(media_id)
+        if asset.get("status") == "UPLOADING":
+            raise MediaError(409, "NOT_UPLOADED")
+        limit = max_bytes_for(asset["ext"])
+        try:
+            raw = self.storage.get_limited(asset["s3Key"], limit)
+        except FileNotFoundError as error:
+            raise MediaError(404, "MEDIA_NOT_FOUND") from error
+        if len(raw) > limit:
+            raise MediaError(413, "FILE_TOO_LARGE")
+        if asset.get("size") is not None and len(raw) != asset["size"]:
+            raise MediaError(409, "FILE_SIZE_MISMATCH")
         key = f'rooms/{asset["roomId"]}/files/{media_id}/original.{asset["ext"]}'
         if key != asset["s3Key"]:
             self.storage.put(key, raw)
@@ -305,6 +329,12 @@ class MediaService:
         if job.get("leaseUntil", 0) > time.time() or job.get("availableAt", 0) > time.time():
             return False
         asset = self.asset(job["mediaId"])
+        if self.is_deleted(asset):
+            try:
+                self.db.commit([record.change({**job, "status":"CANCELLED", "errorCode":"MEDIA_NOT_FOUND", "leaseUntil":0})])
+            except Conflict:
+                return False
+            return True
         try:
             room = self.rooms.record(asset["roomId"])
         except HTTPException:
@@ -378,6 +408,10 @@ class MediaService:
         if record.value.get("leaseToken") != lease or record.value["status"] != "PROCESSING":
             raise LeaseLost()
         media = self.db.get("MEDIA", "ASSET#" + asset["mediaId"])
+        deleted_pk, deleted_sk = "ROOM#" + asset["roomId"], "MEDIA_DELETED#" + asset["mediaId"]
+        if self.db.get(deleted_pk, deleted_sk):
+            self.db.commit([record.change({**record.value, "status":"CANCELLED", "errorCode":"MEDIA_NOT_FOUND", "leaseUntil":0})])
+            return False
         if media.value.get("extractionVersion", 0) != asset.get("extractionVersion", 0):
             self.db.commit([record.change({**record.value, "status": "CANCELLED", "errorCode": "SOURCE_VERSION_CHANGED", "leaseUntil": 0})])
             return False
@@ -387,11 +421,21 @@ class MediaService:
             self.db.commit([record.change({**record.value, "status": "CANCELLED", "errorCode": "ROOM_DELETED", "leaseUntil": 0})])
             return False
         from app.ai.refresh import request as refresh_request
-        self.db.commit([room.change(room.value, check=True),
-                        refresh_request(asset["roomId"], {"mediaId":asset["mediaId"]}, key),
+        detected_languages = sorted({p["language"] for p in result.get("pageDetails", []) if p.get("language")})
+        recognition_models = sorted({p["model"] for p in result.get("pageDetails", []) if p.get("model")})
+        if asset["type"] in ("audio", "video"):
+            if not detected_languages and result.get("language"):
+                detected_languages = [result["language"]]
+            if not recognition_models and result.get("recognitionModel"):
+                recognition_models = [result["recognitionModel"]]
+        self.db.commit([room.change(room.value, check=True), Change(deleted_pk, deleted_sk, None, None, check=True),
+                        *refresh_request(asset["roomId"], {"mediaId":asset["mediaId"]}, key),
                         record.change({**record.value, "status": "COMPLETED", "progress": 100, "errorCode": None, "leaseUntil": 0}),
                         media.change({**media.value, "transcriptKey": key, "extractionVersion": result["version"], "pageCount": len(result["pages"]), "needsOcr": result["needsOcr"],
-                                      "detectedLanguages": sorted({p["language"] for p in result.get("pageDetails", []) if p.get("language")}),
-                                      "recognitionModel": sorted({p["model"] for p in result.get("pageDetails", []) if p.get("model")})})])
-        self.on_event(asset["roomId"], {"type":"source:updated", "mediaId":asset["mediaId"], "version":result["version"]})
+                                      "detectedLanguages": detected_languages,
+                                      "recognitionModel": recognition_models})])
+        try:
+            self.on_event(asset["roomId"], {"type":"source:updated", "mediaId":asset["mediaId"], "version":result["version"]})
+        except Exception:
+            log.exception("Source notification failed; the completed extraction remains available")
         return True

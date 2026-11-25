@@ -104,6 +104,7 @@ class FeatureChecks(unittest.TestCase):
             self.jobs.rename_summary("r", listed[0]["entryId"], "해킹", "outsider")
 
     def test_delete_summary_owner_only_and_allows_regeneration(self):
+        from app.ai import routes
         job = self.jobs.submit(self.body, "owner")
         self.assertTrue(self.jobs.work(job["jobId"]))
         entry = self.jobs.list_summaries("r", "owner")[0]["entryId"]
@@ -111,6 +112,17 @@ class FeatureChecks(unittest.TestCase):
             self.jobs.delete_summary("r", entry, "outsider")
         self.assertEqual(self.jobs.delete_summary("r", entry, "owner")["deleted"], True)
         self.assertEqual(self.jobs.list_summaries("r", "owner"), [])
+        self.jobs.index(self.db.get("AI_JOBS", entry).value)
+        with patch.object(routes, "ai_jobs", self.jobs):
+            for operation in (
+                lambda: self.jobs.get(entry, "owner"),
+                lambda: self.jobs.read_summary("r", entry, "owner"),
+                lambda: self.jobs.rename_summary("r", entry, "changed", "owner"),
+                lambda: routes.shared_result("r", entry, historical=True, user="owner"),
+            ):
+                with self.assertRaises(HTTPException) as error:
+                    operation()
+                self.assertEqual((error.exception.status_code, error.exception.detail), (404, "SUMMARY_NOT_FOUND"))
         with self.assertRaises(HTTPException):
             self.jobs.delete_summary("r", entry, "owner")
         again = self.jobs.submit(self.body, "owner")  # 지운 결과의 검증된 아티팩트를 다시 사용한다
@@ -118,6 +130,30 @@ class FeatureChecks(unittest.TestCase):
         self.assertTrue(again["cached"])
         self.assertTrue(self.jobs.work(again["jobId"]))
         self.assertEqual(self.model.calls, 1)
+
+    def test_ai_submission_checks_membership_consent_and_private_policy_before_queueing(self):
+        from app.ai.policy import ExternalAIPolicy
+
+        policy = self.jobs.translation.policy = ExternalAIPolicy(self.db, self.rooms, daily_limit=5)
+        room = self.rooms.record("r")
+        for user, code, detail in (("outsider", 404, "ROOM_NOT_FOUND"), ("owner", 403, "AI_CONSENT_REQUIRED")):
+            with self.assertRaises(HTTPException) as error:
+                self.jobs.submit(self.body, user)
+            self.assertEqual((error.exception.status_code, error.exception.detail), (code, detail))
+        policy.set_consent("owner", True)
+        self.db.commit([room.change({**room.value, "visibility":"private"})])
+        with self.assertRaises(HTTPException) as error:
+            self.jobs.submit(self.body, "owner")
+        self.assertEqual((error.exception.status_code, error.exception.detail), (403, "AI_PRIVATE_ROOM_DISABLED"))
+        self.assertEqual(self.db.query("AI_JOBS"), [])
+        self.assertTrue(self.jobs.queue.local_jobs.empty())
+
+    def test_notification_failure_keeps_completed_job(self):
+        job = self.jobs.submit(self.body, "owner")
+        with patch.object(self.media, "on_event", side_effect=ConnectionError("Redis down")), self.assertLogs("app.ai.jobs"):
+            self.assertTrue(self.jobs.work(job["jobId"]))
+        result = self.jobs.get(job["jobId"], "owner")
+        self.assertEqual((result["status"], result["errorCode"], result["errorStatus"]), ("COMPLETED", None, None))
 
     def test_delete_file_owner_only_and_idempotent(self):
         from app.core.database import Change
@@ -130,8 +166,9 @@ class FeatureChecks(unittest.TestCase):
             Change("ROOM#r", "MEDIA_MESSAGE#m9", None, {"messageSeq": 20}),
         ])
         self.assertEqual(self.media.live_asset("m9")["mediaId"], "m9")
-        with self.assertRaises(HTTPException):
+        with self.assertRaises(MediaError) as error:
             self.media.delete_file("m9", "outsider")  # 방 멤버가 아니면 거부
+        self.assertEqual((error.exception.status, error.exception.code), (404, "MEDIA_NOT_FOUND"))
         self.assertEqual(self.media.delete_file("m9", "owner")["status"], "DELETED")
         with self.assertRaises(MediaError):
             self.media.live_asset("m9")  # 삭제된 파일은 요약·번역에서도 없는 파일로 본다

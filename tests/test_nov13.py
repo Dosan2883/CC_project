@@ -2,7 +2,7 @@ import concurrent.futures
 from urllib.parse import urlparse, parse_qs
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from fastapi import HTTPException
 import support
 import test_cd_features as cd
@@ -75,6 +75,31 @@ class StoredResultChecks(unittest.TestCase):
             self.jobs.submit(self.body, "owner")
         self.assertEqual(error.exception.detail, "RESULT_STORAGE_UNAVAILABLE")
         self.assertEqual(self.model.calls, 0)
+
+    def test_large_artifact_is_staged_and_reused_after_final_write_failure(self):
+        from app.ai.artifacts import digest
+        identity, key = {"kind":"test"}, "large-result.json"
+        result = {"evidence":"가" * 120_000}
+        producer = Mock(return_value=result)
+        put = self.media.storage.put
+
+        def fail_final(path, raw):
+            if path == key:
+                raise OSError("result write unavailable")
+            put(path, raw)
+
+        with patch.object(self.media.storage, "put", side_effect=fail_final), self.assertRaises(HTTPException):
+            self.jobs.artifacts.run(identity, key, producer)
+        pending = self.db.get("AI_ARTIFACTS", digest(identity)).value
+        self.assertNotIn("pendingResult", pending)
+        self.assertEqual(self.jobs.artifacts.read(identity, pending["pendingKey"]), result)
+
+        self.assertEqual(self.jobs.artifacts.run(identity, key, producer)[0], result)
+        complete = self.db.get("AI_ARTIFACTS", digest(identity)).value
+        self.assertNotIn("pendingResult", complete)
+        self.assertNotIn("pendingKey", complete)
+        self.assertIsNone(self.media.storage.optional(pending["pendingKey"]))
+        producer.assert_called_once_with()
 
     def test_s3_result_restores_database_completion_without_ai(self):
         job = self.complete()

@@ -66,12 +66,7 @@ def get_job(job_id: str, user: str = Depends(current_user)):
 
 @router.post("/api/ai/jobs/{job_id}/retry", status_code=202)
 def retry_job(job_id: str, user: str = Depends(current_user)):
-    job = ai_jobs.get(job_id, user)
-    if job["status"] != "FAILED":
-        raise HTTPException(409, "JOB_NOT_FAILED")
-    ai_jobs.db.update("AI_JOBS", job_id, lambda value: {**value, "requester":user, "status":"PENDING", "attempts":0, "availableAt":0, "leaseUntil":0, "deadLetter":False})
-    ai_jobs.queue.send(job_id)
-    return ai_jobs.get(job_id, user)
+    return ai_jobs.retry(job_id, user)
 
 
 @router.get("/api/rooms/{room_id}/ai-results")
@@ -81,15 +76,18 @@ def room_results(room_id: str, user: str = Depends(current_user)):
 
 @router.get("/api/rooms/{room_id}/ai-results/{job_id}")
 def shared_result(room_id: str, job_id: str, historical: bool = False, user: str = Depends(current_user)):
-    ai_jobs.rooms.require_member(room_id, user)
+    ai_jobs.require_room_member(room_id, user)
+    ai_jobs.require_visible(room_id, job_id)
     record = ai_jobs.db.get("AI_JOBS", job_id)
     if not record or record.value["roomId"] != room_id:
         raise HTTPException(404, "JOB_NOT_FOUND")
     try:
         return ai_jobs.get(job_id, user)
     except HTTPException as error:
-        if not historical or error.status_code not in (404, 409, 422) or record.value["status"] != "COMPLETED":
+        if error.detail == "SUMMARY_NOT_FOUND" or not historical or error.status_code not in (404, 409, 422) or record.value["status"] != "COMPLETED":
             raise
+        ai_jobs.require_room_member(room_id, user)
+        ai_jobs.require_visible(room_id, job_id)
         import json
         raw = json.loads(ai_jobs.media.storage.get(record.value["resultKey"]))
         return {"jobId":job_id, "target":record.value["target"], "stale":True, "result":raw.get("result", raw)}

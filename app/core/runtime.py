@@ -1,8 +1,10 @@
 """설정에 따라 공용 영속 저장소·이벤트 버스·워커를 구성한다."""
 import asyncio
+import json
 import logging
 import os
 import secrets
+import threading
 
 from app.ai.client import LambdaTranslator
 from app.ai.policy import ExternalAIPolicy
@@ -30,24 +32,52 @@ auth = AuthService(AccountRepository(db), TokenSigner(secret), PersistentThrottl
 manager = ConnectionManager(store, room_repo, config.REDIS_URL, config.DYNAMODB_TABLE or "messenger")
 loop = None
 sync_redis = None
+redis_lock = threading.Lock()
+log = logging.getLogger(__name__)
 
 
 def notify_room(room_id, payload):
     global sync_redis
-    if loop and loop.is_running():
-        future = asyncio.run_coroutine_threadsafe(manager.broadcast(room_id, payload), loop)
-        def completed(result):
+    try:
+        if payload.get("type") == "source:updated":
+            ai_jobs.queue.wake()
+        active_loop = loop
+        if active_loop and active_loop.is_running():
+            coroutine = manager.broadcast(room_id, payload)
             try:
-                result.result()
+                future = asyncio.run_coroutine_threadsafe(coroutine, active_loop)
             except Exception:
-                logging.getLogger(__name__).exception("Media notification failed")
-        future.add_done_callback(completed)
-    elif config.REDIS_URL:
-        import json
-        from redis import Redis
-        if sync_redis is None:
-            sync_redis = Redis.from_url(config.REDIS_URL, socket_connect_timeout=5, socket_timeout=5)
-        sync_redis.publish(manager.bus.channel, json.dumps({"node": "worker", "room": room_id, "payload": payload}))
+                coroutine.close()
+                raise
+
+            def completed(result):
+                if result.cancelled():
+                    return
+                try:
+                    result.result()
+                except Exception:
+                    log.exception("Room notification failed")
+
+            future.add_done_callback(completed)
+        elif config.REDIS_URL:
+            from redis import Redis
+            with redis_lock:
+                if sync_redis is None:
+                    sync_redis = Redis.from_url(config.REDIS_URL, socket_connect_timeout=5, socket_timeout=5)
+                sync_redis.publish(manager.bus.channel, json.dumps({"node": "worker", "room": room_id, "payload": payload}))
+    except Exception:
+        log.exception("Room notification failed")
+
+
+def close_notifications():
+    global sync_redis
+    with redis_lock:
+        redis, sync_redis = sync_redis, None
+        if redis is not None:
+            try:
+                redis.close()
+            except Exception:
+                log.exception("Room notification cleanup failed")
 
 
 storage = S3Storage(config.S3_BUCKET, config.aws_client("s3")) if config.S3_BUCKET else LocalStorage(config.DATA_DIR)
@@ -60,5 +90,5 @@ ai_policy = ExternalAIPolicy(db, room_repo, config.AI_DAILY_CALL_LIMIT, config.A
 translator = LambdaTranslator(config.TRANSLATE_URL, config.TRANSLATE_SECRET, reserve_call=ai_policy.reserve_call)
 translation = TranslationService(db, room_repo, translator, config.TRANSLATE_HOURLY_LIMIT, media=media_svc, policy=ai_policy)
 from app.ai.jobs import AIJobs
-ai_queue_url = os.getenv("AI_QUEUE_URL", "")
+ai_queue_url = config.AI_QUEUE_URL
 ai_jobs = AIJobs(db, room_repo, media_svc, translation, config.aws_client("sqs") if ai_queue_url else None, ai_queue_url)

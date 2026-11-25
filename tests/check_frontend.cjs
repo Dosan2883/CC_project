@@ -1,6 +1,7 @@
 /* DOM/HTTP 모형으로 스크립트 연결과 사용자 흐름을 검증한다. 실제 브라우저 렌더링 검사는 아니다. */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const {webcrypto} = require("node:crypto");
 const vm = require("node:vm");
 const path = require("node:path");
 const root = path.resolve(__dirname, "..");
@@ -28,10 +29,18 @@ class Element {
   querySelectorAll() { return []; }
   addEventListener() {}
   focus() {}
+  reset() {}
+  pause() { this.pauses = (this.pauses || 0) + 1; }
+  load() {}
 }
 const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Element()]));
 const timers = new Map();
 const localSettings = new Map();
+const sessionSettings = new Map();
+const storage = values => ({
+  get length() { return values.size; }, key: index => [...values.keys()][index] ?? null,
+  getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key),
+});
 let timerId = 0, focused = false;
 const requests = [];
 let saved = {uiLocale: "en", sourceLanguage: "ja", defaultTargetLanguage: "fr", preferredSubtitleLanguage: "es"};
@@ -39,7 +48,7 @@ let aiConsent = false;
 const document = {
   documentElement: {dataset: {}}, body: new Element(), visibilityState: "visible", hasFocus: () => focused,
   getElementById(id) { assert.ok(elements.has(id), "missing DOM element: " + id); return elements.get(id); },
-  querySelectorAll() { return []; }, addEventListener() {}, createElement() { return new Element(); },
+  querySelectorAll() { return []; }, addEventListener() {}, removeEventListener() {}, createElement() { return new Element(); },
   createTextNode(textContent) { return {textContent}; }
 };
 class WebSocket {
@@ -48,12 +57,11 @@ class WebSocket {
   close() {}
 }
 const context = vm.createContext({
-  AbortController,
+  AbortController, crypto:webcrypto,
   Option: function (label, value) { this.textContent = label; this.value = value; },
   console, document, navigator: {language: "ko-KR"}, window: {addEventListener() {}},
   location: {protocol: "http:", host: "localhost"}, WebSocket, confirm: () => true,
-  localStorage: {getItem: key => localSettings.get(key) ?? null, setItem: (key, value) => localSettings.set(key, value)},
-  sessionStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
+  localStorage: storage(localSettings), sessionStorage: storage(sessionSettings),
   setInterval() { return 0; }, clearInterval() {},
   setTimeout(fn, ms) { timers.set(++timerId, {fn, ms}); return timerId; }, clearTimeout(id) { timers.delete(id); },
   async fetch(url, options = {}) {
@@ -77,7 +85,9 @@ const context = vm.createContext({
 });
 const evaluate = source => vm.runInContext(source, context);
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const themeBootstrap = html.match(/<script>([\s\S]+?)<\/script>/)[1];
+assert.match(html, /<script src="\/static\/shared\/theme\.js"><\/script>/);
+assert.doesNotMatch(html, /<script\s*>/);
+const themeBootstrap = fs.readFileSync(path.join(root, "frontend/static/shared/theme.js"), "utf8");
 function loadFrontendScripts() {
   evaluate(themeBootstrap);
   for (const match of html.matchAll(/<script defer src="\/static\/([^"?]+)(?:\?[^"]*)?"><\/script>/g)) {
@@ -85,7 +95,18 @@ function loadFrontendScripts() {
   }
 }
 (async () => {
+  sessionSettings.set("token", "previous-token");
+  localSettings.set("messageOutbox:previous:room", "legacy text");
+  let finishAutoLogin;
+  const realFetch = context.fetch;
+  context.fetch = (url, options) => {
+    if (url === "/api/auth/me") return new Promise(resolve => { finishAutoLogin = resolve; });
+    if (url === "/api/auth/login") return Promise.resolve({ok:true, json:async () => ({token:"test-token", nickname:"owner"})});
+    if (url === "/invalid-response") return Promise.resolve({ok:false, status:422, json:async () => ({detail:[{msg:"validation failed"}]})});
+    return realFetch(url, options);
+  };
   loadFrontendScripts();
+  assert.ok(!localSettings.has("messageOutbox:previous:room"));
   await tick();
   const theme = elements.get("prefTheme");
   assert.equal(theme.value, "system");
@@ -103,7 +124,13 @@ function loadFrontendScripts() {
   assert.equal(elements.get("title").textContent, "AI 협업 메신저");
   elements.get("uiLocale").onchange({target: {value: "en"}});
   assert.equal(elements.get("title").textContent, "AI Collab Messenger");
-  await evaluate('startSession("test-token", "owner")');
+  elements.get("user").value = "owner";
+  elements.get("authPw").value = "secret123";
+  await elements.get("authForm").onsubmit({preventDefault() {}});
+  finishAutoLogin({ok:false, status:401, json:async () => ({detail:"expired"})});
+  await tick();
+  assert.equal(sessionSettings.get("token"), "test-token");
+  await assert.rejects(evaluate('api("/invalid-response")'), error => error.status === 422 && error.code === undefined);
   assert.equal(elements.get("srcLang").value, "ja");
   assert.equal(elements.get("tgtLang").value, "fr");
   await evaluate('savePreferences({defaultTargetLanguage: "zh-CN"})');
@@ -118,6 +145,15 @@ function loadFrontendScripts() {
   assert.equal(elements.get("deleteRoom").hidden, false);
   WebSocket.last.onopen();
   assert.equal(WebSocket.last.sent[0].type, "auth");
+  elements.get("body").value = "private draft";
+  elements.get("form").onsubmit({preventDefault() {}});
+  elements.get("form").onsubmit({preventDefault() {}});
+  assert.equal(elements.get("body").value, "");
+  assert.deepEqual(WebSocket.last.sent.map(event => event.type), ["auth"]);
+  assert.equal(JSON.parse(sessionSettings.get("messageOutbox:owner:room")).length, 1);
+  assert.ok(!localSettings.has("messageOutbox:owner:room"));
+  WebSocket.last.onmessage({data: JSON.stringify({type:"presence", members:["owner"]})});
+  assert.deepEqual(WebSocket.last.sent.map(event => event.type), ["auth", "message:send"]);
   assert.ok(!WebSocket.last.sent.some(event => event.type === "preferences:update"), "connect must not overwrite saved settings");
   WebSocket.last.onmessage({data: JSON.stringify({type: "message:new", messageSeq: 1, sender: "owner", bodyOriginal: "hello", sentAt: Date.now(), sourceLanguage: "en"})});
   assert.ok(![...timers.values()].some(timer => timer.ms === 250), "unfocused tab must not mark read");
@@ -145,5 +181,20 @@ function loadFrontendScripts() {
   assert.ok(requests.some(request => request.url === "/api/rooms/room" && request.method === "DELETE"));
   evaluate('enterRoom({roomId: "other", name: "Other", createdBy: "someone-else"})');
   assert.equal(elements.get("deleteRoom").hidden, true);
+  evaluate('fileCard({mediaId:"audio-a",filename:"a.mp3",ext:"mp3",size:1}); fileCard({mediaId:"audio-b",filename:"b.mp3",ext:"mp3",size:1})');
+  await tick();
+  evaluate('cards["audio-a"]({status:"COMPLETED",progress:100}); cards["audio-b"]({status:"COMPLETED",progress:100})');
+  const playerA = evaluate('audioPlayers.get("audio-a")'), playerB = evaluate('audioPlayers.get("audio-b")');
+  evaluate('cards["audio-a"]({status:"DELETED"})');
+  assert.equal(playerA.pauses, 1);
+  assert.equal(playerB.pauses, undefined);
+  assert.equal(evaluate('audioPlayers.has("audio-b")'), true);
+  elements.get("settingsPop").hidden = false;
+  elements.get("roomMenu").open = true;
+  evaluate('logout(false)');
+  assert.equal(elements.get("settingsPop").hidden, true);
+  assert.equal(elements.get("roomMenu").open, false);
+  assert.ok(!sessionSettings.has("messageOutbox:owner:room"));
+  assert.equal(evaluate('pendingTimers.size'), 0);
   console.log("Frontend checks passed: script loading, saved preferences, explicit read policy, direct upload completion, creator-only delete UI.");
 })().catch(error => {console.error(error); process.exitCode = 1;});

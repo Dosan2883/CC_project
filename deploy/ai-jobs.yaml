@@ -15,14 +15,24 @@ Parameters:
     Type: String
   RedisUrl:
     Type: String
-  AuthSecret:
+  AuthSecretParameterName:
     Type: String
-    NoEcho: true
+    Description: SSM SecureString parameter name for the shared signing key.
+    MinLength: 1
   TranslateUrl:
     Type: String
-  TranslateSecret:
+  TranslateSecretParameterName:
     Type: String
-    NoEcho: true
+    Description: SSM SecureString parameter name for the translation API secret.
+    MinLength: 1
+  LambdaSubnetIds:
+    Type: String
+    Default: ''
+    AllowedPattern: '(subnet-([0-9a-f]{8}|[0-9a-f]{17})(,subnet-([0-9a-f]{8}|[0-9a-f]{17}))*)?'
+  LambdaSecurityGroupIds:
+    Type: String
+    Default: ''
+    AllowedPattern: '(sg-([0-9a-f]{8}|[0-9a-f]{17})(,sg-([0-9a-f]{8}|[0-9a-f]{17}))*)?'
   EnableMonitoring:
     Type: String
     Default: '0'
@@ -39,6 +49,15 @@ Parameters:
     Type: String
     Default: '0'
     AllowedValues: ['0', '1']
+Rules:
+  VpcParametersTogether:
+    Assertions:
+      - Assert: !Or
+          - !And [!Equals [!Ref LambdaSubnetIds, ''], !Equals [!Ref LambdaSecurityGroupIds, '']]
+          - !And [!Not [!Equals [!Ref LambdaSubnetIds, '']], !Not [!Equals [!Ref LambdaSecurityGroupIds, '']]]
+        AssertDescription: Supply both Lambda subnet and security group lists or leave both empty.
+Conditions:
+  AttachWorkerVpc: !And [!Not [!Equals [!Ref LambdaSubnetIds, '']], !Not [!Equals [!Ref LambdaSecurityGroupIds, '']]]
 Resources:
   DeadLetters:
     Type: AWS::SQS::Queue
@@ -59,6 +78,11 @@ Resources:
       Role: !Ref RoleArn
       Timeout: 900
       MemorySize: 512
+      VpcConfig: !If
+        - AttachWorkerVpc
+        - SubnetIds: !Split [',', !Ref LambdaSubnetIds]
+          SecurityGroupIds: !Split [',', !Ref LambdaSecurityGroupIds]
+        - !Ref AWS::NoValue
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: !Ref CodeKey
@@ -70,9 +94,9 @@ Resources:
           MEDIA_QUEUE_URL: !Ref MediaQueueUrl
           AI_QUEUE_URL: !Ref Queue
           REDIS_URL: !Ref RedisUrl
-          AUTH_SECRET: !Ref AuthSecret
+          AUTH_SECRET_PARAMETER: !Ref AuthSecretParameterName
           TRANSLATE_URL: !Ref TranslateUrl
-          TRANSLATE_SECRET: !Ref TranslateSecret
+          TRANSLATE_SECRET_PARAMETER: !Ref TranslateSecretParameterName
           RUN_MEDIA_WORKER: '0'
           CLOUDWATCH_METRICS: !Ref EnableMonitoring
           CLOUDWATCH_NAMESPACE: !Ref MetricsNamespace

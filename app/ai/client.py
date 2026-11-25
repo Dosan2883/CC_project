@@ -22,10 +22,16 @@ class TranslationUnavailable(Exception):
     """번역 서비스를 부르지 못했거나, 쓸 수 없는 응답이 왔다."""
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class LambdaTranslator:
     def __init__(self, url="", secret="", timeout=25, *, reserve_call=None):
         self.url, self.secret, self.timeout = url.strip(), secret, timeout
         self.reserve_call = reserve_call
+        self.opener = urllib.request.build_opener(NoRedirect())
         if self.url:
             parsed = urlparse(self.url)
             # https만 허용한다. 비밀 헤더가 암호화 없이 나가거나, file:// 같은 주소를 여는 일을 막는다.
@@ -63,7 +69,7 @@ class LambdaTranslator:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with self.opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise TranslationUnavailable("response too large")

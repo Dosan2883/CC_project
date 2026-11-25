@@ -279,8 +279,16 @@ class FakeFunctionUrl(BaseHTTPRequestHandler):
     """Lambda 함수 URL을 흉내 내는 로컬 서버. 받은 요청을 기록한다."""
     seen = []
     reply = (200, {"translated": "Hello", "finishReason":"end_turn", "truncated":False, "modelVersion":"v1"})
+    redirect = None
+    redirected = []
+
+    def do_GET(self):
+        self.redirected.append(self.path)
+        self.send_error(404)
 
     def do_POST(self):
+        if self.path == "/redirect-target":
+            self.redirected.append(self.path)
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         FakeFunctionUrl.seen.append({"secret": self.headers.get("x-api-secret"), "body": json.loads(body)})
         status, payload = FakeFunctionUrl.reply
@@ -288,6 +296,8 @@ class FakeFunctionUrl(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
+        if self.redirect:
+            self.send_header("Location", self.redirect)
         self.end_headers()
         self.wfile.write(raw)
 
@@ -309,11 +319,21 @@ class LambdaTranslatorTests(unittest.TestCase):
 
     def setUp(self):
         FakeFunctionUrl.seen.clear()
+        FakeFunctionUrl.redirected.clear()
+        FakeFunctionUrl.redirect = None
         FakeFunctionUrl.reply = (200, {"translated": "Hello", "finishReason":"end_turn", "truncated":False, "modelVersion":"v1"})
 
     def test_sends_secret_header_and_parses_reply(self):
         self.assertEqual(LambdaTranslator(self.url, "s3cret").translate("안녕하세요", "English"), "Hello")
         self.assertEqual(FakeFunctionUrl.seen, [{"secret": "s3cret", "body": {"text": "안녕하세요", "target": "English"}}])
+
+    def test_redirect_is_rejected_without_contacting_destination(self):
+        FakeFunctionUrl.redirect = "/redirect-target"
+        for status in (301, 302, 303, 307, 308):
+            with self.subTest(status=status), self.assertRaises(TranslationUnavailable):
+                FakeFunctionUrl.reply = (status, {})
+                LambdaTranslator(self.url, "test-secret").translate("text", "English")
+        self.assertEqual(FakeFunctionUrl.redirected, [])
 
     def test_bad_replies_become_unavailable(self):
         translator = LambdaTranslator(self.url, "s3cret")

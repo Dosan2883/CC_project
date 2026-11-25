@@ -74,6 +74,37 @@ class WorkerChecks(unittest.TestCase):
         self.assertEqual(self.service.status(media_id)["status"], "CANCELLED")
         self.assertIsNone(self.service.asset(media_id)["transcriptKey"])
 
+    def test_large_audio_and_video_upload_and_legacy_original_migration(self):
+        for ext, signature in (("mp3", b"ID3"), ("mp4", b"0000ftyp")):
+            with self.subTest(extension=ext):
+                payload = signature.ljust(21 * 1024 * 1024, b"\0")
+                upload = self.service.request_upload("room", "owner", f"sample.{ext}", len(payload))
+                media_id = upload["mediaId"]
+                if self.storage.direct_upload:
+                    self.storage.put(self.service.asset(media_id)["s3Key"], payload)
+                    self.service.complete_upload(media_id, "owner")
+                else:
+                    token = parse_qs(urlparse(upload["uploadUrl"]).query)["token"][0]
+                    self.service.receive_upload(media_id, token, payload)
+                self.assertEqual(self.service.original(media_id), payload)
+                legacy_key = "original/" + media_id
+                self.storage.put(legacy_key, payload)
+                self.db.update("MEDIA", "ASSET#" + media_id, lambda asset: {**asset, "s3Key":legacy_key})
+                self.assertEqual(self.service.original(media_id), payload)
+                new_key = self.service.asset(media_id)["s3Key"]
+                self.assertNotEqual(new_key, legacy_key)
+                self.assertEqual(self.storage.get(new_key), payload)
+
+    def test_pending_index_avoids_historical_queries_after_backfill(self):
+        self.service.queue.recover()
+        media_id = self.upload()
+        with patch.object(self.db, "query", wraps=self.db.query) as query:
+            self.service.queue.recover()
+            self.service.queue.recover()
+        self.assertTrue(all(call.args[0] != "MEDIA_JOBS" for call in query.call_args_list))
+        self.assertIsNone(self.db.get("PENDING_JOBS#MEDIA_JOBS", media_id))
+        self.assertEqual(self.service.status(media_id)["status"], "COMPLETED")
+
     def test_explicit_extraction_is_durable_even_if_queue_send_fails(self):
         upload = self.service.request_upload("room", "owner", "demo.txt", 5)
         media_id = upload["mediaId"]
@@ -129,10 +160,11 @@ class AWSMediaChecks(WorkerChecks):
         with self.assertRaises(ClientError):
             self.s3.put_object(Bucket=self.storage.bucket, Key=key, Body=b"other", IfNoneMatch="*")
         store = MessageStore(self.db, self.rooms)
-        for _ in range(3):
-            asset = self.service.complete_upload(media_id, "owner")
-            store.append("room", "owner", asset["filename"], "und", {"mediaId": media_id})
-        self.assertEqual(len(store.after("room", 0)), 1)
+        for attempt in range(3):
+            _, message, created = self.service.complete_upload(media_id, "owner")
+            self.assertEqual(created, attempt == 0)
+            self.assertEqual(message["messageSeq"], 1)
+        self.assertEqual(store.after("room", 0), [message])
 
     def test_sqs_acknowledges_only_completed_and_duplicate_work(self):
         sqs = boto3.client("sqs", region_name="us-east-1")

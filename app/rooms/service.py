@@ -1,9 +1,11 @@
 """방 검색, 비밀번호·멤버 권한 확인과 응답 구성."""
 import hmac
+import os
 from app.auth.service import hash_password
 from app.core.runtime import manager, room_repo
 
 INTERNAL_FIELDS = {"key", "salt", "pwHash"}
+_DUMMY_SALT = os.urandom(16)
 
 
 def normalize(name):
@@ -15,7 +17,9 @@ def find_by_name(name):
 
 
 def check_room_password(room, password):
-    return hmac.compare_digest(hash_password(password, room["salt"]), room["pwHash"])
+    private = room is not None and room["visibility"] == "private"
+    digest = hash_password(password, room["salt"] if private else _DUMMY_SALT)
+    return hmac.compare_digest(digest, room["pwHash"] if private else bytes(32)) and private
 
 
 def room_view(room_id, user=None):

@@ -87,7 +87,7 @@ class SourceRevisionTests(unittest.TestCase):
         from app.chat import routes
         from app.ai.refresh import recover
         f = self.fixture
-        old = f.jobs.submit(f.body, "owner")
+        old = f.jobs.submit({**f.body, "title":"Release decisions"}, "owner")
         self.assertTrue(f.jobs.work(old["jobId"]))
         with patch.multiple(routes, db=f.db, room_repo=f.rooms), patch.object(routes.manager, "broadcast"):
             edited = asyncio.run(routes.correct_message("r", 1, routes.MessageCorrection(version=1, text="release on Monday", language="en"), "owner"))
@@ -101,7 +101,30 @@ class SourceRevisionTests(unittest.TestCase):
         self.assertEqual(len(jobs), 2)
         new = next(r.value for r in jobs if r.sk != old["jobId"])
         self.assertEqual(new["evidence"][0]["text"], "release on Monday")
+        self.assertEqual(new["title"], "Release decisions")
         self.assertEqual(f.db.query("SOURCE_REFRESH")[0].value["status"], "COMPLETED")
+
+    def test_message_edit_retries_when_another_message_advances_the_room(self):
+        from app.chat import routes
+        from app.chat.repository import MessageStore
+
+        f = self.fixture
+        store = MessageStore(f.db, f.rooms)
+        commit = f.db.commit
+        advanced = False
+
+        def race(changes):
+            nonlocal advanced
+            if not advanced and any(change.pk == "SOURCE_REFRESH" for change in changes):
+                advanced = True
+                store.append("r", "owner", "another message", "en")
+            return commit(changes)
+
+        with patch.multiple(routes, db=f.db, room_repo=f.rooms), patch.object(f.db, "commit", side_effect=race):
+            edited = routes.save_message_correction("r", 1, routes.MessageCorrection(version=1, text="corrected"), "owner")
+        self.assertTrue(advanced)
+        self.assertEqual(edited["revision"], 2)
+        self.assertEqual(len(store.after("r", 0)), 2)
 
     def test_segment_edit_and_subtitles_authorization_and_revision(self):
         from app.media import routes

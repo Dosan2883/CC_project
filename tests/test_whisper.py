@@ -144,7 +144,8 @@ class ExtractAndUploadTests(unittest.TestCase):
             data = b"RIFF\0\0\0\0WAVEfmt " + b"\0" * 100
             upload = media.request_upload("r", "owner", "회의.wav", len(data))
             token = upload["uploadUrl"].split("token=")[1]
-            asset = media.receive_upload(upload["mediaId"], token, data)
+            asset, _, created = media.receive_upload(upload["mediaId"], token, data)
+            self.assertTrue(created)
             self.assertEqual((asset["type"], asset["status"]), ("audio", "UPLOADED"))
             media.start_job(upload["mediaId"])
             self.assertTrue(media.work(upload["mediaId"]))

@@ -7,6 +7,7 @@
 EC2의 인스턴스 역할(LabInstanceProfile)로 실행한다. 비밀 값은 인자로 받지 않는다.
 """
 import argparse
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -67,7 +68,10 @@ def upsert_env(path, values):
         if "=" in line and not line.lstrip().startswith("#") and key in remaining:
             lines[index] = f"{key}={remaining.pop(key)}"
     lines.extend(f"{key}={value}" for key, value in remaining.items())
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if os.name == "posix" and path.exists():
+        path.chmod(0o600)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as stream:
+        stream.write("\n".join(lines) + "\n")
 
 
 def existing_keys(path):

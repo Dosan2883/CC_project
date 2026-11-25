@@ -54,10 +54,10 @@ async def create_room(body: CreateRoom, background_tasks: BackgroundTasks, user:
     room = {"roomId": uuid.uuid4().hex, "name": name, "key": name.casefold(), "visibility": body.visibility,
             "createdBy": user, "createdAt": int(time.time() * 1000)}
     if body.visibility == "private":
-        if not 4 <= len(body.password) <= 64:
+        if not 4 <= len(body.password) <= 64 or not body.password.strip():
             raise HTTPException(400, "password must be 4-64 characters")
         room["salt"] = os.urandom(16)
-        room["pwHash"] = hash_password(body.password, room["salt"])
+        room["pwHash"] = await asyncio.to_thread(hash_password, body.password, room["salt"])
     await asyncio.to_thread(room_repo.create, room)
     background_tasks.add_task(room_folders.ensure, room["roomId"])
     return await asyncio.to_thread(room_view, room["roomId"], user)
@@ -77,15 +77,22 @@ async def join_public_room(room_id: str, user: str = Depends(current_user)):
 @router.post("/api/rooms/enter-private")
 async def enter_private_room(body: EnterPrivate, user: str = Depends(current_user)):
     """비공개방은 방 이름과 비밀번호가 모두 맞아야 들어간다."""
-    if await asyncio.to_thread(room_throttle.blocked, user):
+    attempt = await asyncio.to_thread(room_throttle.reserve, user)
+    if attempt is None:
         raise HTTPException(429, "too many attempts, try again later")
     room_id = await asyncio.to_thread(find_by_name, body.name)
-    room = await asyncio.to_thread(get_room, room_id) if room_id else None
+    room = None
+    if room_id:
+        try:
+            room = await asyncio.to_thread(get_room, room_id)
+        except HTTPException as error:
+            if error.status_code != 404:
+                raise
     # 이름이 틀렸는지 비밀번호가 틀렸는지 알려 주지 않는다 (비공개방 존재 노출 방지).
-    if not room or room["visibility"] != "private" or not check_room_password(room, body.password):
-        await asyncio.to_thread(room_throttle.fail, user)
+    valid = await asyncio.to_thread(check_room_password, room, body.password)
+    await asyncio.to_thread(room_throttle.finish, user, attempt, valid)
+    if not valid:
         raise HTTPException(403, "invalid room name or password")
-    await asyncio.to_thread(room_throttle.clear, user)
     if await asyncio.to_thread(room_repo.join, room_id, user):
         await manager.broadcast(room_id, {"type": "system", "event": "joined", "user": user})
     return await asyncio.to_thread(room_view, room_id, user)
@@ -93,7 +100,6 @@ async def enter_private_room(body: EnterPrivate, user: str = Depends(current_use
 
 @router.post("/api/rooms/{room_id}/leave")
 async def leave_room(room_id: str, user: str = Depends(current_user)):
-    await asyncio.to_thread(get_room, room_id)
     if await asyncio.to_thread(room_repo.leave, room_id, user):
         await manager.broadcast(room_id, {"type": "member:left", "user": user})
         await manager.broadcast(room_id, {"type": "system", "event": "left", "user": user})

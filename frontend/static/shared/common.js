@@ -16,7 +16,7 @@ const initial = s => [...s][0]?.toUpperCase() || "?";
 const activeApiRequests = new Set();
 function cancelApiRequests() { for (const controller of activeApiRequests) controller.abort(); }
 async function api(path, method = "GET", body, options = {}) {
-  const requestToken = token, controller = new AbortController();
+  const requestToken = options.authToken === undefined ? token : options.authToken, controller = new AbortController();
   activeApiRequests.add(controller);
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, {once:true});
@@ -32,9 +32,11 @@ async function api(path, method = "GET", body, options = {}) {
   });
   try {
   return await Promise.race([cancelled, (async () => {
-  const res = await fetch(path, { method, headers, signal:controller.signal, body: body ? JSON.stringify(body) : undefined });
+  const res = await fetch(path, { method, headers, signal:controller.signal, cache:"no-store", body: body ? JSON.stringify(body) : undefined });
   if (!res.ok) {
-    const e = new Error(t("failed")); e.status = res.status; e.code = (await res.json().catch(() => ({}))).detail;
+    const detail = (await res.json().catch(() => null))?.detail;
+    const e = new Error(t("failed")); e.status = res.status;
+    if (typeof detail === "string") e.code = detail;
     if (res.status === 401 && token === requestToken && token && !path.startsWith("/api/auth/")) logout(true);
     throw e;
   }

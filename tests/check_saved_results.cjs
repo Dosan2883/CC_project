@@ -58,7 +58,7 @@ const response=value=>({ok:true,status:200,json:async()=>value,blob:async()=>({}
   await finder.children[0].children[0].onclick();
   assert.deepEqual(calls.find(c=>c.url==='/api/rooms/r/events/suggest').body.sources,sources);
 
-  evaluate('updateSummarySelection(1,{kind:"message",messageSeq:1},8,true)');
+  evaluate('updateSummarySelection(1,{kind:"message",messageSeq:1},true)');
   assert.ok(elements.get('sumCount').textContent.includes('1'));
   const before=calls.filter(c=>c.method==='POST').length;
   await elements.get('sumGenerate').onclick(); await tick();
