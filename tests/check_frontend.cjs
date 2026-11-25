@@ -31,12 +31,13 @@ class Element {
 }
 const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Element()]));
 const timers = new Map();
+const localSettings = new Map();
 let timerId = 0, focused = false;
 const requests = [];
 let saved = {uiLocale: "en", sourceLanguage: "ja", defaultTargetLanguage: "fr", preferredSubtitleLanguage: "es"};
 let aiConsent = false;
 const document = {
-  documentElement: {}, body: new Element(), visibilityState: "visible", hasFocus: () => focused,
+  documentElement: {dataset: {}}, body: new Element(), visibilityState: "visible", hasFocus: () => focused,
   getElementById(id) { assert.ok(elements.has(id), "missing DOM element: " + id); return elements.get(id); },
   querySelectorAll() { return []; }, addEventListener() {}, createElement() { return new Element(); },
   createTextNode(textContent) { return {textContent}; }
@@ -51,6 +52,7 @@ const context = vm.createContext({
   Option: function (label, value) { this.textContent = label; this.value = value; },
   console, document, navigator: {language: "ko-KR"}, window: {addEventListener() {}},
   location: {protocol: "http:", host: "localhost"}, WebSocket, confirm: () => true,
+  localStorage: {getItem: key => localSettings.get(key) ?? null, setItem: (key, value) => localSettings.set(key, value)},
   sessionStorage: {getItem() { return null; }, setItem() {}, removeItem() {}},
   setInterval() { return 0; }, clearInterval() {},
   setTimeout(fn, ms) { timers.set(++timerId, {fn, ms}); return timerId; }, clearTimeout(id) { timers.delete(id); },
@@ -75,11 +77,29 @@ const context = vm.createContext({
 });
 const evaluate = source => vm.runInContext(source, context);
 const tick = () => new Promise(resolve => setImmediate(resolve));
-(async () => {
-  for (const match of html.matchAll(/<script defer src="\/static\/([^"]+)"><\/script>/g)) {
+const themeBootstrap = html.match(/<script>([\s\S]+?)<\/script>/)[1];
+function loadFrontendScripts() {
+  evaluate(themeBootstrap);
+  for (const match of html.matchAll(/<script defer src="\/static\/([^"?]+)(?:\?[^"]*)?"><\/script>/g)) {
     vm.runInContext(fs.readFileSync(path.join(root, "frontend/static", match[1]), "utf8"), context, {filename: match[1]});
   }
+}
+(async () => {
+  loadFrontendScripts();
   await tick();
+  const theme = elements.get("prefTheme");
+  assert.equal(theme.value, "system");
+  theme.value = "dark";
+  theme.onchange();
+  assert.equal(document.documentElement.dataset.theme, "dark");
+  assert.equal(localSettings.get("theme"), "dark");
+  delete document.documentElement.dataset.theme;
+  evaluate(themeBootstrap);
+  assert.equal(document.documentElement.dataset.theme, "dark");
+  theme.value = "system";
+  theme.onchange();
+  assert.equal(document.documentElement.dataset.theme, undefined);
+  assert.equal(localSettings.get("theme"), "system");
   assert.equal(elements.get("title").textContent, "AI 협업 메신저");
   elements.get("uiLocale").onchange({target: {value: "en"}});
   assert.equal(elements.get("title").textContent, "AI Collab Messenger");

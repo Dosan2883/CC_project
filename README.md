@@ -116,6 +116,26 @@ printf '\nSTT_BACKEND=whisper\nSTT_MODEL=base\n' >> ~/messenger/.env
 
 설정한 뒤 앱을 다시 시작합니다. `STT_BACKEND`를 비워 두면 음성 파일 처리가 "음성 인식이 설정되지 않았습니다"로 실패하고, `fake`로 두면 모델 없이 정해진 가짜 결과가 나옵니다. 로컬 PC(Python 3.14 RC)에서는 `faster-whisper`를 설치할 수 없어 `fake`로만 확인합니다. 서버에서 오류가 나면 `app.log`를 확인합니다. 자주 쓰는 설정(모델 크기, 최대 길이, 업로드 크기)은 `.env.example`에 설명이 있습니다.
 
+**이미지 글자 인식(OCR) 처음 설정** (서버마다 한 번만)
+
+이미지 본문 추출 시 "서버에 이미지 글자 인식 도구가 설치되어 있지 않습니다"(`OCR_NOT_INSTALLED`)가 나오면 `paddleocr`·`paddlepaddle`이 설치되지 않은 상태입니다. EC2 서버에서 OCR 의존성을 설치한 뒤 앱을 다시 시작합니다.
+
+```bash
+cd ~/messenger && .venv/bin/pip install -r requirements-ocr.txt
+# 선택: 6개 언어 모델을 미리 내려받으려면 아래 명령을 실행합니다(생략해도 첫 OCR 요청 시 자동 다운로드).
+cd ~/messenger && .venv/bin/python -m scripts.prepare_ocr --manifest ~/messenger/data/ocr-ready.json
+```
+
+설치 후 앱을 다시 시작합니다. `paddlepaddle`·`paddleocr`는 정식 **Python 3.11 또는 3.12**만 지원하므로, 로컬 Windows PC(Python 3.14 RC)에서는 바로 설치되지 않습니다. 로컬 PC에서 직접 OCR을 실행하려면 Python 3.11/3.12를 설치해 `.venv`를 새로 만든 뒤 아래 명령으로 설치합니다.
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-ocr.txt
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload
+```
+
+설치 전에 이미 `OCR_NOT_INSTALLED`로 저장된 이미지는 설치 및 서버 재시작 후 새로 업로드하거나 본문 아래의 **이 언어로 OCR 다시 실행** 버튼을 눌러 다시 추출해야 결과가 갱신됩니다.
+
 **그대로 유지되는 것과 다시 해야 하는 것**
 
 - 유지: 설치한 라이브러리(`.venv`), 내려받은 모델, 서버의 `.env`, `data` 폴더

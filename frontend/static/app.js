@@ -11,15 +11,25 @@ applyI18n();
 $("railChats").onclick = toggleSideList;
 $("railCal").onclick = toggleCalendar;
 $("sideCal").onclick = toggleCalendar;
-// 언어 설정은 레일의 설정 버튼으로 여는 선택 상자(모바일은 닉네임 줄의 설정 버튼). 바깥을 누르거나 Esc를 누르면 닫힌다.
+// 데스크톱은 레일, 모바일은 닉네임 줄에서 설정을 연다.
 const settingsPop = $("settingsPop"), settingsButtons = "#railPrefs, #sideSettings";
+const themeSelect = $("prefTheme"), pageTheme = document.documentElement.dataset;
+themeSelect.value = pageTheme.theme ?? "system";
+themeSelect.onchange = () => {
+  const theme = themeSelect.value;
+  if (theme === "system") delete pageTheme.theme;
+  else pageTheme.theme = theme;
+  try { localStorage.setItem("theme", theme); } catch { /* 현재 페이지에는 계속 적용한다. */ }
+};
 function toggleSettings(anchor) {
   settingsPop.hidden = !settingsPop.hidden;
   if (settingsPop.hidden) return;
   // 레일의 설정 아이콘 바로 옆에 띄운다(모바일은 CSS대로 화면 아래). 화면 아래로 넘치지 않게 위로 올린다.
-  const box = anchor.getBoundingClientRect(), onRail = !!anchor.closest("#rail");
-  settingsPop.style.left = onRail ? `${Math.round(box.right + 8)}px` : "";
-  settingsPop.style.top = onRail ? `${Math.max(8, Math.min(Math.round(box.top), innerHeight - settingsPop.offsetHeight - 8))}px` : "";
+  if (anchor.closest("#rail")) {
+    const box = anchor.getBoundingClientRect();
+    settingsPop.style.setProperty("--settings-left", `${Math.round(box.right + 8)}px`);
+    settingsPop.style.setProperty("--settings-top", `${Math.max(8, Math.min(Math.round(box.top), innerHeight - settingsPop.offsetHeight - 8))}px`);
+  }
 }
 $("railPrefs").onclick = () => toggleSettings($("railPrefs"));
 $("sideSettings").onclick = () => toggleSettings($("sideSettings"));

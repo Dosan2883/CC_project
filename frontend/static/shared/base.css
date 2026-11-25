@@ -1,25 +1,47 @@
 :root {
-    --bg:#ffffff; --panel:#ffffff; --side:#f8f9fb; --text:#1f2430; --muted:#6b7280; --line:#e3e6ec;
-    --accent:#2563eb; --accent-soft:#e8f0ff; --bubble:#f1f3f7; --mine:#2563eb; --danger:#dc2626; --shadow:0 8px 30px rgba(20,30,60,.08);
+    color-scheme:light;
+    --bg:light-dark(#fff, #171a21);
+    --panel:light-dark(#fff, #1d212a);
+    --side:light-dark(#f8f9fb, #181b23);
+    --text:light-dark(#1f2430, #e6e8ee);
+    --muted:light-dark(#616978, #a6afbf);
+    --line:light-dark(#e3e6ec, #39404d);
+    --accent:light-dark(#2563eb, #93bfff);
+    --accent-soft:light-dark(#e8f0ff, #263756);
+    --bubble:light-dark(#f1f3f7, #292f3b);
+    --mine:#2563eb;
+    --on-mine:#fff;
+    --danger:light-dark(#dc2626, #fca5a5);
+    --success:light-dark(#15803d, #4ade80);
+    --online:light-dark(#16a34a, #4ade80);
+    --toast-bg:light-dark(#111827, #e6e8ee);
+    --toast-text:light-dark(#fff, #171a21);
+    --shadow-color:light-dark(rgb(20 30 60 / .16), rgb(0 0 0 / .45));
+    --shadow:0 8px 30px var(--shadow-color);
+    --shadow-sm:0 1px 3px var(--shadow-color);
+    --shadow-pop:0 8px 24px var(--shadow-color);
+    --shadow-lg:0 16px 44px var(--shadow-color);
+    --shadow-sheet:0 -8px 24px var(--shadow-color);
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg:#1a1d24; --panel:#1a1d24; --side:#16181e; --text:#e6e8ee; --muted:#9aa1b0; --line:#2a2e38;
-      --accent:#60a5fa; --accent-soft:#1e2c47; --bubble:#262a33; --mine:#2563eb; --danger:#f87171; --shadow:none;
-    }
+    :root:not([data-theme="light"]) { color-scheme:dark; }
   }
+  :root[data-theme="dark"] { color-scheme:dark; }
   * { box-sizing:border-box; }
   html, body { height:100%; }
+  html { background:var(--bg); }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
-  input, select { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; min-width:0; }
+  input, select, textarea { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; min-width:0; }
+  option { background:var(--panel); color:var(--text); }
+  input::placeholder, textarea::placeholder { color:var(--muted); }
   /* 버튼은 테두리가 없다. 마우스를 올리면 글자 밑에 밑줄이 그어진다. */
   button { font:inherit; color:var(--text); background:transparent; border:0; border-radius:8px; padding:8px 12px; min-width:0; }
   button:hover:not(:disabled):not(.fold-btn):not(.float-close):not(#attach) { text-decoration:underline; text-underline-offset:4px; }
   .fold-btn:hover:not(:disabled), .float-close:hover:not(:disabled), #attach:hover:not(:disabled) { background:var(--accent-soft); }  /* 기호만 있는 버튼은 밑줄 대신 배경 */
-  input:focus, select:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; }
   button { cursor:pointer; }
   button:disabled { opacity:.45; cursor:not-allowed; }
-  button.primary { background:var(--mine); color:#fff; font-weight:600; }
+  button.primary { background:var(--mine); color:var(--on-mine); font-weight:600; }
   button.ghost { background:transparent; }
   button.danger { color:var(--danger); }
   @keyframes spin { to { transform:rotate(360deg); } }

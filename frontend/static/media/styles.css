@@ -11,7 +11,7 @@
   .file-ocr-options summary { cursor:pointer; color:var(--muted); }
   .st { font-size:11px; border-radius:999px; padding:1px 8px; border:1px solid var(--line); color:var(--muted); flex:none; }
   .st[data-s="PROCESSING"], .st[data-s="PENDING"] { color:var(--accent); border-color:var(--accent); }
-  .st[data-s="COMPLETED"] { color:#16a34a; border-color:#16a34a; }
+  .st[data-s="COMPLETED"] { color:var(--success); border-color:var(--success); }
   .st[data-s="FAILED"] { color:var(--danger); border-color:var(--danger); }
   .bar { height:5px; background:var(--bubble); border-radius:999px; overflow:hidden; }
   .bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .2s; }

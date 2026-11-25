@@ -1,13 +1,13 @@
-const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+const fs = require('node:fs'), path = require('node:path');
 const assert = require('node:assert/strict');
 const base = fs.readFileSync(path.join(__dirname, 'check_frontend.cjs'), 'utf8');
-const harness = new Function('require', '__dirname', base.slice(0, base.indexOf('(async () => {')) + '\nreturn {context,elements,evaluate,tick,html,root,timers};')(require, __dirname);
-const {context,elements,evaluate,tick,html,root,timers} = harness;
+const harness = new Function('require', '__dirname', base.slice(0, base.indexOf('(async () => {')) + '\nreturn {context,elements,evaluate,tick,timers,loadFrontendScripts};')(require, __dirname);
+const {context,elements,evaluate,tick,timers,loadFrontendScripts} = harness;
 const reply = (body, status=200) => ({ok:status<400,status,json:async()=>body});
 const room = {roomId:'new',name:'New room',visibility:'public',joined:true,createdBy:'owner',memberCount:1,online:0};
 const deferred = () => { let resolve; const promise = new Promise(r=>resolve=r); return {promise,resolve}; };
 (async () => {
-  for (const match of html.matchAll(/<script defer src="\/static\/([^"]+)"><\/script>/g)) vm.runInContext(fs.readFileSync(path.join(root,'frontend/static',match[1]),'utf8'),context);
+  loadFrontendScripts();
   await tick(); evaluate('token="one"; me="owner"'); context.testRoom=room;
   context.fetch=async url=>url.endsWith('/public')?reply({detail:'down'},503):reply([room]);
   await evaluate('loadRooms()');

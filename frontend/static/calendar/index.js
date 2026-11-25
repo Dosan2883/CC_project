@@ -19,7 +19,7 @@ function calButton(label, className, handler) {
 const calErrorText = error => t("calErr_" + error.code) || aiErrorText(error.code) || t("failed");
 
 const CAL_API = "/api/calendar/events";
-const CAL_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#9333ea", "#0891b2", "#db2777", "#65a30d"];  // 서로 확실히 구분되는 색
+const CAL_COLORS = ["blue", "red", "green", "orange", "purple", "cyan", "pink", "lime"].map(color => `var(--cal-room-${color})`);
 
 /* 일정에는 '관련 방'을 붙일 수 있고, 방마다 다른 색으로 보인다. 방 id 순서로 색을 정해서 방이 늘어도 기존 방의 색은 바뀌지 않는다.
    방을 붙이지 않았거나 이미 나간 방의 일정은 회색이다. */

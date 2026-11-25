@@ -1,11 +1,11 @@
-aside { background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; padding:16px; gap:14px; overflow-y:auto; }
+aside { background:var(--side); border-right:1px solid var(--line); display:flex; flex-direction:column; min-width:0; min-height:0; padding:16px; gap:14px; overflow-y:auto; }
   aside > * { flex:none; }
   .brand { display:flex; align-items:center; gap:10px; }
   .brand strong { flex:1; font-size:15px; }
   .me { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); }
   .tabs { display:flex; gap:4px; background:var(--bubble); padding:3px; border-radius:10px; }
   .tabs button { flex:1; border:0; background:transparent; padding:6px 8px; font-size:13px; border-radius:8px; color:var(--muted); }
-  .tabs button.on { background:var(--panel); color:var(--text); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.12); }
+  .tabs button.on { background:var(--panel); color:var(--text); font-weight:600; box-shadow:var(--shadow-sm); }
   .form { display:grid; gap:8px; }
   .form input { width:100%; }
   .seg { display:flex; gap:6px; }
@@ -22,6 +22,6 @@ aside { background:var(--side); border-right:1px solid var(--line); display:flex
   .room .info { flex:1; min-width:0; }
   .room .name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .room .sub { color:var(--muted); font-size:12px; }
-  .dot { width:8px; height:8px; border-radius:50%; background:#22c55e; flex:none; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--online); flex:none; }
   .hint { color:var(--muted); font-size:13px; text-align:center; padding:18px 8px; }
   #err { color:var(--danger); font-size:13px; }

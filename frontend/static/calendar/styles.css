@@ -1,4 +1,14 @@
   /* ---------- 방 캘린더 ---------- */
+  :root {
+    --cal-room-blue:light-dark(#2563eb, #93bfff);
+    --cal-room-red:light-dark(#dc2626, #fca5a5);
+    --cal-room-green:light-dark(#15803d, #4ade80);
+    --cal-room-orange:light-dark(#b45309, #fdba74);
+    --cal-room-purple:light-dark(#9333ea, #c4b5fd);
+    --cal-room-cyan:light-dark(#0e7490, #67e8f9);
+    --cal-room-pink:light-dark(#db2777, #f9a8d4);
+    --cal-room-lime:light-dark(#4d7c0f, #bef264);
+  }
   .cal-nav { display:flex; align-items:center; gap:6px; }
   .cal-nav strong { flex:1; text-align:center; }
   .cal-nav button { padding:3px 10px; }
@@ -33,8 +43,7 @@
   .cal-form { display:grid; gap:6px; padding-top:10px; border-top:1px solid var(--line); }
   .cal-row { display:flex; gap:6px; }
   .cal-row input { flex:1; }
-  .cal-form textarea { width:100%; min-width:0; font:inherit; font-size:14px; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; resize:vertical; }
-  .cal-form textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+  .cal-form textarea { width:100%; font-size:14px; resize:vertical; }
   .cal-row button { flex:none; }
 
   /* ---------- 요약 창의 일정 찾기 ---------- */

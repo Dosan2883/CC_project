@@ -11,7 +11,7 @@
   /* 마우스를 올리면(키보드는 포커스) 설명 카드가 아래로 펼쳐진다. 카드까지 마우스가 이어지도록 위쪽에 여백(padding-top)을 둔다. */
   .land-pop { position:absolute; top:100%; right:0; z-index:30; padding-top:10px; opacity:0; visibility:hidden; transform:translateY(-4px); transition:opacity .15s ease, transform .15s ease, visibility 0s linear .15s; }
   .land-item:hover > .land-pop, .land-item:focus-within > .land-pop { opacity:1; visibility:visible; transform:none; transition-delay:0s; }
-  .land-card { width:min(440px, 86vw); margin:0; padding:16px 18px; background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 18px 50px rgba(20,40,120,.16); font-size:14px; font-weight:400; line-height:1.55; text-align:left; }
+  .land-card { width:min(440px, 86vw); margin:0; padding:16px 18px; background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow-lg); font-size:14px; font-weight:400; line-height:1.55; text-align:left; }
   .land-list { list-style:none; display:grid; gap:11px; width:auto; min-width:150px; white-space:nowrap; font-weight:600; }  /* 기능 이름만 나오는 짧은 목록 */
   .land-card-small { width:auto; white-space:nowrap; font-weight:600; }
   .land-lang select { width:auto; background:var(--bubble); border:0; border-radius:999px; padding:9px 16px; font-weight:600; }
@@ -25,17 +25,16 @@
   #authForm { display:grid; gap:14px; max-width:400px; }
   #authForm label { display:block; }
   #login #authForm input { width:100%; background:var(--bubble); border:0; border-radius:14px; padding:16px 18px; font-size:16px; }
-  #login #authForm input::placeholder { color:var(--muted); }
   #login #authForm input:focus { outline:2px solid var(--accent); outline-offset:0; }
   #authErr { color:var(--danger); font-size:13px; min-height:1em; }
   .hint-small { font-size:12px; color:var(--muted); }
   #authSubmit { justify-self:start; border-radius:999px; padding:14px 38px; font-size:18px; margin-top:4px; }
-  .mark { width:34px; height:34px; border-radius:10px; background:var(--mine); color:#fff; display:grid; place-items:center; font-weight:700; }
+  .mark { width:34px; height:34px; border-radius:10px; background:var(--mine); color:var(--on-mine); display:grid; place-items:center; font-weight:700; }
 
   /* 오른쪽 그림: CSS로 그린 휴대폰 화면(꾸밈용이라 화면 읽기 도구는 건너뛴다) */
   .land-art { position:relative; width:100%; max-width:560px; height:580px; justify-self:center; }
-  .land-sticker { position:absolute; left:6px; top:0; font-size:92px; line-height:1; transform:rotate(-12deg); filter:drop-shadow(0 8px 14px rgba(37,99,235,.25)); }
-  .phone { position:absolute; display:grid; gap:10px; align-content:start; padding:18px 16px; background:var(--panel); border:1px solid var(--line); border-radius:34px; box-shadow:0 24px 60px rgba(20,40,120,.16); }
+  .land-sticker { position:absolute; left:6px; top:0; font-size:92px; line-height:1; transform:rotate(-12deg); filter:drop-shadow(0 8px 14px var(--shadow-color)); }
+  .phone { position:absolute; display:grid; gap:10px; align-content:start; padding:18px 16px; background:var(--panel); border:1px solid var(--line); border-radius:34px; box-shadow:var(--shadow-lg); }
   .phone.back { right:0; top:30px; width:260px; height:430px; }
   .phone.front { left:34px; top:170px; width:300px; height:390px; }
   .p-time { font-size:12px; font-weight:700; }
@@ -48,11 +47,11 @@
   .a3 { background:linear-gradient(135deg,#34d399,#059669); } .a4 { background:linear-gradient(135deg,#fbbf24,#f59e0b); }
   .p-msg { display:grid; gap:2px; max-width:82%; padding:9px 13px; border-radius:18px; font-size:13px; line-height:1.4; background:var(--bubble); }
   .p-msg small { font-size:11px; opacity:.75; }
-  .p-msg.out { justify-self:end; background:var(--mine); color:#fff; }
-  .p-msg.wave { justify-self:end; display:flex; align-items:center; gap:8px; background:var(--mine); color:#fff; padding:10px 14px; }
+  .p-msg.out { justify-self:end; background:var(--mine); color:var(--on-mine); }
+  .p-msg.wave { justify-self:end; display:flex; align-items:center; gap:8px; background:var(--mine); color:var(--on-mine); padding:10px 14px; }
   .p-play { font-size:11px; }
   .bars { display:flex; align-items:center; gap:2px; height:22px; }
-  .bars i { width:3px; border-radius:2px; background:#fff; height:40%; }
+  .bars i { width:3px; border-radius:2px; background:var(--on-mine); height:40%; }
   .bars i:nth-child(4n+1) { height:35%; } .bars i:nth-child(4n+2) { height:75%; } .bars i:nth-child(4n+3) { height:55%; } .bars i:nth-child(4n) { height:95%; }
   .p-chip { justify-self:start; margin-top:4px; padding:7px 13px; border-radius:999px; background:var(--accent-soft); color:var(--accent); font-size:12px; font-weight:700; }
 

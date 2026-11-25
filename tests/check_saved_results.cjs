@@ -1,10 +1,10 @@
-const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const base=fs.readFileSync(path.join(__dirname,'check_frontend.cjs'),'utf8');
-const h=new Function('require','__dirname',base.slice(0,base.indexOf('(async () => {'))+'\nreturn {context,elements,evaluate,tick,html,root};')(require,__dirname);
-const {context,elements,evaluate,tick,html,root}=h;
+const h=new Function('require','__dirname',base.slice(0,base.indexOf('(async () => {'))+'\nreturn {context,elements,evaluate,tick,loadFrontendScripts};')(require,__dirname);
+const {context,elements,evaluate,tick,loadFrontendScripts}=h;
 const response=value=>({ok:true,status:200,json:async()=>value,blob:async()=>({})});
 (async()=>{
-  for(const m of html.matchAll(/<script defer src="\/static\/([^"]+)"><\/script>/g)) vm.runInContext(fs.readFileSync(path.join(root,'frontend/static',m[1]),'utf8'),context);
+  loadFrontendScripts();
   await tick(); evaluate('token="owner-token";me="owner";enterRoom({roomId:"r",name:"Room",createdBy:"owner"})'); await tick();
   const calls=[];
   const revoked=[];

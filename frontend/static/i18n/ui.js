@@ -13,7 +13,7 @@ function applyI18n() {
   $("srcLang").title = t("srcLang");
   $("user").placeholder = t("nickname"); $("authPw").placeholder = t("password"); $("authPw2").placeholder = t("passwordConfirm");
   $("docFold").title = t("panelClose");
-  $("railChats").title = t("roomList"); $("railCal").title = t("calendar"); $("railPrefs").title = t("languageSettings"); $("railLogout").title = t("logout");
+  $("railChats").title = t("roomList"); $("railCal").title = t("calendar"); $("railPrefs").title = t("settings"); $("railLogout").title = t("logout");
   $("roomMenuButton").title = $("roomMenuButton").ariaLabel = t("roomMenu");
   if (typeof refreshSelectionBar === "function") refreshSelectionBar();
   setAuthMode(authMode);

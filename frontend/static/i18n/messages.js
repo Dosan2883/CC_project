@@ -104,6 +104,9 @@ calErr_DUPLICATE_EVENT:"同じ日時に同じ予定が登録されています�
         eDup:"そのルーム名は既に使われています", eBad:"ルーム名またはパスワードが正しくありません", eMany:"試行回数が多すぎます。しばらくしてからお試しください", ePw:"非公開ルームには4文字以上のパスワードが必要です" },
 };
 const LANG_NAMES = { ko:"한국어", en:"English", ja:"日本語", "zh-CN":"简体中文", es:"Español", fr:"Français" };
-Object.assign(I18N.ko, {languageSettings:"언어 설정",deleteRoom:"방 삭제", confirmDeleteRoom:"방을 삭제할까요? 참여자는 더 이상 대화와 첨부 파일에 접근할 수 없습니다.", roomDeleted:"방이 삭제되었습니다", read:"읽음", unread:"안 읽음", stCANCELLED:"취소됨"});
-Object.assign(I18N.en, {languageSettings:"Language settings",deleteRoom:"Delete room", confirmDeleteRoom:"Delete this room? Members will lose access to its messages and files.", roomDeleted:"The room was deleted", read:"Read", unread:"Unread", stCANCELLED:"Cancelled"});
-Object.assign(I18N.ja, {languageSettings:"言語設定",deleteRoom:"ルーム削除", confirmDeleteRoom:"ルームを削除しますか？メンバーはメッセージとファイルにアクセスできなくなります。", roomDeleted:"ルームが削除されました", read:"既読", unread:"未読", stCANCELLED:"キャンセル"});
+Object.assign(I18N.ko, {settings:"설정", theme:"테마", themeSystem:"시스템", themeLight:"라이트", themeDark:"다크"});
+Object.assign(I18N.en, {settings:"Settings", theme:"Theme", themeSystem:"System", themeLight:"Light", themeDark:"Dark"});
+Object.assign(I18N.ja, {settings:"設定", theme:"テーマ", themeSystem:"システム", themeLight:"ライト", themeDark:"ダーク"});
+Object.assign(I18N.ko, {deleteRoom:"방 삭제", confirmDeleteRoom:"방을 삭제할까요? 참여자는 더 이상 대화와 첨부 파일에 접근할 수 없습니다.", roomDeleted:"방이 삭제되었습니다", read:"읽음", unread:"안 읽음", stCANCELLED:"취소됨"});
+Object.assign(I18N.en, {deleteRoom:"Delete room", confirmDeleteRoom:"Delete this room? Members will lose access to its messages and files.", roomDeleted:"The room was deleted", read:"Read", unread:"Unread", stCANCELLED:"Cancelled"});
+Object.assign(I18N.ja, {deleteRoom:"ルーム削除", confirmDeleteRoom:"ルームを削除しますか？メンバーはメッセージとファイルにアクセスできなくなります。", roomDeleted:"ルームが削除されました", read:"既読", unread:"未読", stCANCELLED:"キャンセル"});
