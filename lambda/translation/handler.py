@@ -39,6 +39,17 @@ Examples:
 [4] (2026-11-18) 안녕하세요, 잘 지내세요?
 []"""
 
+
+# 길이 제한과 "베끼지 말 것"이 없으면 작은 모델(Nova Lite)은 원문을 거의 그대로 돌려준다.
+# 근거 번호 [n]은 앱이 결과를 검사할 때 필요하다.
+SUMMARY_INSTRUCTION = """Summarize only the selected evidence in the target language, as a SHORT bullet list.
+Use at most 5 bullets and no more than about one third of the input length.
+Rewrite in your own words; never copy sentences verbatim.
+Keep only key points, decisions, action items, owners and deadlines.
+Drop greetings, small talk and repetition.
+Cite evidence by ending each bullet with its number, like [1].
+Do not invent facts. Return only the summary."""
+
 _secret = None
 _ssm = None
 _bedrock = None
@@ -96,7 +107,7 @@ def _translate(text, target, action="translate"):
     if _bedrock is None:
         _bedrock = boto3.client("bedrock-runtime")
 
-    instruction = (DEADLINE_INSTRUCTION if action == "deadlines" else "Summarize only the selected evidence in the target language. Include decisions and action items only if explicitly present. Cite evidence using [1], [2], etc. Do not invent facts. Return only the summary with citations."
+    instruction = (DEADLINE_INSTRUCTION if action == "deadlines" else SUMMARY_INSTRUCTION
                    if action == "summarize" else
                    "Translate the user's text into the requested target language. Preserve meaning, tone, names, numbers and paragraph breaks. Return only the translated text without explanation.")
     user_text = f"Messages:\n{text}" if action == "deadlines" else f"Target language: {target}\n\nText:\n{text}"

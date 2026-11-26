@@ -3,6 +3,7 @@
     #app.doc-open { --doc-w:0px; }
     #docPanel { position:fixed; inset:auto 0 0; height:52dvh; z-index:20; grid-column:auto; border-left:0; border-top:1px solid var(--line); box-shadow:var(--shadow-sheet); }
     #docPanel .doc-main { min-width:0; }
+    #docResize { display:none; }
     #app:not(.doc-open) #docPanel { transform:translateY(100%); transition:transform .3s ease, opacity .2s ease, visibility 0s linear .3s; }
     #app.doc-open #docPanel { transform:none; transition:transform .3s ease, opacity .2s ease, visibility 0s linear 0s; }
     @media (prefers-reduced-motion: reduce) { #app:not(.doc-open) #docPanel, #app.doc-open #docPanel { transition:none !important; } }

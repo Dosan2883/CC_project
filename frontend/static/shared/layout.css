@@ -1,6 +1,6 @@
 /* ---------- 앱 레이아웃 ---------- */
-  #app { display:none; height:100dvh; background:var(--panel); overflow:hidden; }  /* 화면 전체를 쓰는 웹 페이지 */
-  #app { --rail-w:64px; --side-w:300px; --info-w:300px; --doc-w:0px; grid-template-columns:var(--rail-w) var(--side-w) minmax(0,1fr) var(--info-w) var(--doc-w); transition:grid-template-columns .3s ease; }
+  /* 화면 전체를 쓰는 웹 페이지 */
+  #app { display:none; height:100dvh; background:var(--panel); overflow:hidden; --rail-w:64px; --side-w:300px; --info-w:300px; --doc-w:0px; grid-template-columns:var(--rail-w) var(--side-w) minmax(0,1fr) var(--info-w) var(--doc-w); transition:grid-template-columns .3s ease; }
   #app > #rail { grid-column:1; grid-row:1; }
   #app > aside { grid-column:2; grid-row:1; }
   #app > main { grid-column:3; grid-row:1; position:relative; }
@@ -11,7 +11,7 @@
     #app.side-collapsed > aside { opacity:0; visibility:hidden; overflow:hidden; pointer-events:none; padding-inline:0; border-right:0; transition:opacity .2s ease, visibility 0s linear .3s; }
     #sideCal, #sideSettings, #logout { display:none; }  /* 레일이 없는 모바일에서만 닉네임 줄에 보인다 */
   }
-  #app.doc-open { --doc-w:max(380px,42%); --info-w:0px; }  /* 요약 창이 열리면 상세 정보는 접는다 */
+  #app.doc-open { --doc-w:var(--doc-open-w); --info-w:0px; }  /* 요약 창이 열리면 상세 정보는 접는다. 요약 창 폭은 panels.js가 정한다 */
   #app:not(.in-room) { --info-w:0px; }
   @media (max-width:1180px) { #app { --info-w:0px; } }
   /* 왼쪽 아이콘 레일 */
@@ -45,9 +45,12 @@
   .fold-btn { padding:2px 9px; font-size:12px; flex:none; }
   .side-open { position:absolute; top:12px; left:8px; z-index:2; }
   #app.side-collapsed .chat-head { padding-left:max(48px, var(--col)); }
-  #docPanel { grid-column:5; grid-row:1; display:flex; flex-direction:row; min-width:0; min-height:0; overflow:hidden; background:var(--side); border-left:1px solid var(--line); transition:opacity .25s ease, visibility 0s linear 0s; }
+  #docPanel { position:relative; grid-column:5; grid-row:1; display:flex; flex-direction:row; min-width:0; min-height:0; overflow:hidden; background:var(--side); border-left:1px solid var(--line); transition:opacity .25s ease, visibility 0s linear 0s; }
   #app:not(.doc-open) #docPanel { opacity:0; visibility:hidden; pointer-events:none; transition:opacity .2s ease, visibility 0s linear .3s; }  /* 닫히면 폭이 줄면서 서서히 사라진다 */
-  #docPanel .doc-main { min-width:380px; }  /* 폭이 줄어드는 동안 안의 글이 찌그러지지 않게 한다 */
+  #docPanel .doc-main { min-width:var(--doc-open-w); }  /* 폭이 줄어드는 동안 안의 글이 찌그러지지 않게 한다 */
+  #docResize { position:absolute; inset:0 auto 0 0; z-index:1; width:7px; cursor:col-resize; touch-action:none; }  /* 왼쪽 가장자리를 끌어 폭 조절 */
+  #docResize:hover, #docResize:focus-visible, #app.doc-resizing #docResize { background:var(--accent-soft); outline:none; }
+  #app.doc-resizing { transition:none; cursor:col-resize; user-select:none; }  /* 끄는 동안에는 바로 따라온다 */
   @keyframes float-in { from { opacity:0; transform:translateY(8px) scale(.98); } to { opacity:1; transform:none; } }
   @keyframes float-out { to { opacity:0; transform:translateY(6px) scale(.98); } }
   @keyframes menu-in { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
@@ -87,8 +90,8 @@
   .doc-main { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; }
   .doc-head { display:flex; align-items:center; gap:8px; padding:12px 14px; border-bottom:1px solid var(--line); }
   .doc-head strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .sel-bar { display:flex; align-items:center; gap:8px; padding:8px 14px; border-bottom:1px solid var(--line); background:var(--accent-soft); }
-  .sel-bar span { flex:1; min-width:0; font-size:13px; }
+  .sel-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 14px; border-bottom:1px solid var(--line); background:var(--accent-soft); }
+  .sel-bar span { flex:1; min-width:max-content; font-size:13px; }
   .sel-bar button { font-size:12px; padding:4px 12px; border-radius:999px; }
   .room-menu { position:relative; }
   .room-menu > summary { list-style:none; cursor:pointer; user-select:none; padding:8px 12px; border-radius:8px; line-height:1.5; font-size:16px; }

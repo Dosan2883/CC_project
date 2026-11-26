@@ -74,7 +74,7 @@ const response=value=>({ok:true,status:200,json:async()=>value,blob:async()=>({}
   const polls=calls.filter(c=>c.url==='/api/ai/jobs/saved').length;
   await elements.get('sumGenerate').onclick(); await tick();
   const reused=context.document.body.children.filter(node=>node.className==='float-win').at(-1);
-  assert.equal(reused.children[1].children[0].textContent,evaluate('t("summaryExists")'));
+  assert.equal(reused.children[1].children[0].hidden,true,'a reused summary shows no notice');
   assert.equal(calls.filter(c=>c.url==='/api/ai/jobs/saved').length,polls,'a reused summary does not poll a job');
 
   await evaluate('pdfSummarizeAll({mediaId:"long-pdf"})');

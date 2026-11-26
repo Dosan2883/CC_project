@@ -20,7 +20,7 @@ from app.rooms.repository import retry_conflicts
 
 log = logging.getLogger(__name__)
 
-SUMMARY_CACHE_VERSION = "2"  # 요약 프롬프트나 방식을 크게 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
+SUMMARY_CACHE_VERSION = "3"  # 요약 프롬프트나 방식을 크게 바꾸면 올려서 이전 캐시를 쓰지 않게 한다
 
 
 SCRIPTS = {"kana": re.compile("[぀-ヿ]"), "hangul": re.compile("[가-힣]"), "han": re.compile("[一-鿿]")}

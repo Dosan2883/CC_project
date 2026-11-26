@@ -99,8 +99,8 @@ async function runAi(sources, kind = "summarize") {
   async function showExisting(info) {  // 이미 만들어진 요약이면 새로 만들지 않고 저장된 내용을 보여 준다
     const full = await api(`/api/ai/rooms/${roomId}/summaries/${info.entryId}`);
     if (!active()) return;
-    state.textContent = t("summaryExists");
     setBusy(state, false);
+    state.hidden = true;  // 저장된 요약은 안내 문구 없이 바로 보여 준다
     output.textContent = [full.title, full.result.text].join("\n\n");
     showEvidence(evidenceBox, full.result.evidence, evidenceLanguage, active);
     refreshSummaries();
