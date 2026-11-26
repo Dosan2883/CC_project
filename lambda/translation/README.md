@@ -1,32 +1,31 @@
-# Translation Lambda
+# 번역 Lambda
 
-This folder contains the Lambda Function URL handler that matches the app's
-`LambdaTranslator` contract.
+이 폴더에는 앱의 `LambdaTranslator`가 기대하는 요청·응답 약속에 맞춘
+Lambda 함수 URL 처리 코드가 있습니다.
 
-## Configuration
+## 설정
 
-- Runtime: Python 3.12
-- Handler: `handler.handler`
-- `BEDROCK_MODEL_ID`: optional; defaults to `amazon.nova-micro-v1:0`
-- `TRANSLATE_SECRET_PARAMETER`: required SSM Parameter Store name for the
-  SecureString API secret
-- IAM permissions: `ssm:GetParameter` for that parameter and
-  `bedrock:InvokeModel` for the configured model
-- The Lambda URL must use the response format expected by Function URLs.
+- 실행 환경: Python 3.12
+- 핸들러: `handler.handler`
+- `BEDROCK_MODEL_ID`: 선택. 지정하지 않으면 `amazon.nova-micro-v1:0`
+- `TRANSLATE_SECRET_PARAMETER`: 필수. API 비밀값을 SecureString으로 저장한
+  SSM Parameter Store의 이름
+- IAM 권한: 해당 파라미터에 대한 `ssm:GetParameter`와, 설정한 모델에 대한
+  `bedrock:InvokeModel`
+- Lambda URL은 함수 URL이 요구하는 응답 형식을 사용해야 합니다.
 
-The secret is fetched from SSM with decryption and cached for the lifetime of a
-warm execution environment. Do not place the secret value in Lambda environment
-variables or source code.
+비밀값은 SSM에서 복호화해 읽고, Lambda 실행 환경이 유지되는 동안 캐시합니다.
+비밀값을 Lambda 환경 변수나 소스 코드에 넣지 마세요.
 
-## Request and response
+## 요청과 응답
 
-The app sends `POST` with an `x-api-secret` header and JSON body:
+앱은 `x-api-secret` 헤더와 아래 JSON 본문을 `POST`로 보냅니다.
 
 ```json
 {"text":"안녕하세요","target":"English"}
 ```
 
-Successful responses use the Function URL envelope. The JSON `body` contains:
+성공 응답은 함수 URL 응답 형식을 사용합니다. JSON `body`에는 다음 내용이 담깁니다.
 
 ```json
 {
@@ -37,10 +36,10 @@ Successful responses use the Function URL envelope. The JSON `body` contains:
 }
 ```
 
-`finishReason` copies Bedrock Converse's `stopReason`. `truncated` is true only
-when that reason is `max_tokens`. The Converse `inferenceConfig.maxTokens` is
-4000. The app rejects a truncated or contract-mismatched result before caching
-it.
+`finishReason`은 Bedrock Converse의 `stopReason`을 그대로 옮긴 값입니다.
+`truncated`는 그 값이 `max_tokens`일 때만 true입니다. Converse의
+`inferenceConfig.maxTokens`는 4000입니다. 앱은 잘렸거나 약속한 형식과 맞지 않는
+결과를 캐시에 저장하기 전에 거부합니다.
 
-The Lambda code is prepared locally. Deploy it only after configuring the SSM
-parameter, IAM role, model access, and Function URL for the target account.
+Lambda 코드는 로컬에서 준비한 것입니다. 대상 계정에 SSM 파라미터, IAM 역할,
+모델 사용 권한, 함수 URL을 설정한 뒤에 배포하세요.

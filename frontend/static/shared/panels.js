@@ -131,6 +131,42 @@ async function loadSummaries() {
 
 function refreshSummaries() { if (docOpen) loadSummaries(); }
 
+/* 요약 창 폭: 왼쪽 가장자리를 끌거나 좌우 방향키로 조절하고, 두 번 누르면 기본 크기(상세 정보와 같은 폭)로 돌아간다. 마지막 폭은 기억한다.
+   폭의 숫자는 여기에만 두고, CSS는 이 값(--doc-open-w)을 그대로 쓴다. */
+const DOC = {base:300, min:260, keep:724};  // 기본 폭, 최소 폭, 레일·방 목록·채팅에 남길 폭
+let docWidth = DOC.base, docDragging = false;
+try { docWidth = Number(localStorage.getItem("docWidth")) || DOC.base; } catch { /* 저장소를 못 쓰면 기본값 */ }
+const docMax = () => Math.max(DOC.min, (globalThis.innerWidth || 0) - DOC.keep);
+const fitDocWidth = width => Math.round(Math.max(DOC.min, Math.min(width, docMax())));
+
+function applyDocWidth() {  // 기억한 폭이 지금 화면보다 넓으면 줄여서 보여 준다(기억한 값은 그대로)
+  const shown = fitDocWidth(docWidth), handle = $("docResize");
+  $("app").style.setProperty?.("--doc-open-w", `${shown}px`);
+  handle.ariaValueMin = String(DOC.min); handle.ariaValueMax = String(docMax()); handle.ariaValueNow = String(shown);
+}
+
+function saveDocWidth() {
+  try { localStorage.setItem("docWidth", String(docWidth)); } catch { /* 저장 실패는 무시 */ }
+}
+
+function setDocWidth(width) { docWidth = fitDocWidth(width); applyDocWidth(); }
+
+function stopDocResize() {
+  if (!docDragging) return;
+  docDragging = false; $("app").classList.remove("doc-resizing"); saveDocWidth();
+}
+
+$("docResize").onpointerdown = event => { event.preventDefault(); docDragging = true; $("docResize").setPointerCapture(event.pointerId); $("app").classList.add("doc-resizing"); };
+$("docResize").onpointermove = event => { if (docDragging) setDocWidth(innerWidth - event.clientX); };  // 창 오른쪽 끝에서 마우스까지가 요약 창 폭
+$("docResize").onpointerup = $("docResize").onpointercancel = $("docResize").onlostpointercapture = stopDocResize;
+$("docResize").ondblclick = () => { setDocWidth(DOC.base); saveDocWidth(); };
+$("docResize").onkeydown = event => {
+  const step = {ArrowLeft:20, ArrowRight:-20}[event.key];
+  if (step) { event.preventDefault(); setDocWidth(fitDocWidth(docWidth) + step); saveDocWidth(); }
+};
+globalThis.addEventListener?.("resize", applyDocWidth);
+applyDocWidth();
+
 /* ---------- 버튼 ---------- */
 function toggleSideList() {  // 왼쪽 레일의 채팅 버튼(펼치기·접기)과 접힌 뒤 나타나는 → 버튼이 같이 쓴다
   sideCollapsed = !sideCollapsed;
