@@ -40,6 +40,8 @@
   .fold-btn:hover:not(:disabled), .float-close:hover:not(:disabled), #attach:hover:not(:disabled) { background:var(--accent-soft); }  /* 기호만 있는 버튼은 밑줄 대신 배경 */
   input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; }
   button { cursor:pointer; }
+  /* 자물쇠: 왼쪽 레일 아이콘과 같은 무채색 선 아이콘. 글자색을 그대로 따라간다. */
+  .ico-lock, .room .name.private::before { display:inline-block; flex:none; width:1.15em; height:1.15em; vertical-align:-.2em; background:currentColor; --lock:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='10.5' width='14' height='10' rx='2'/%3E%3Cpath d='M8 10.5V7.5a4 4 0 0 1 8 0v3'/%3E%3Ccircle cx='12' cy='14.5' r='1.2'/%3E%3Cpath d='M12 15.7v1.8'/%3E%3C/svg%3E"); -webkit-mask:var(--lock) center/contain no-repeat; mask:var(--lock) center/contain no-repeat; }
   button:disabled { opacity:.45; cursor:not-allowed; }
   button.primary { background:var(--mine); color:var(--on-mine); font-weight:600; }
   button.ghost { background:transparent; }

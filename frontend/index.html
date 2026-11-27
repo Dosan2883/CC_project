@@ -6,15 +6,15 @@
 <meta name="color-scheme" content="light dark">
 <script src="/static/shared/theme.js"></script>
 <title>AI 협업 메신저 데모</title>
-<link rel="stylesheet" href="/static/shared/base.css?v=3">
-<link rel="stylesheet" href="/static/auth/styles.css?v=3">
-<link rel="stylesheet" href="/static/shared/layout.css?v=3">
-<link rel="stylesheet" href="/static/rooms/styles.css?v=3">
-<link rel="stylesheet" href="/static/chat/styles.css?v=3">
-<link rel="stylesheet" href="/static/media/styles.css?v=3">
-<link rel="stylesheet" href="/static/calendar/styles.css?v=3">
-<link rel="stylesheet" href="/static/shared/feedback.css?v=3">
-<link rel="stylesheet" href="/static/shared/responsive.css?v=3">
+<link rel="stylesheet" href="/static/shared/base.css?v=4">
+<link rel="stylesheet" href="/static/auth/styles.css?v=4">
+<link rel="stylesheet" href="/static/shared/layout.css?v=4">
+<link rel="stylesheet" href="/static/rooms/styles.css?v=4">
+<link rel="stylesheet" href="/static/chat/styles.css?v=4">
+<link rel="stylesheet" href="/static/media/styles.css?v=4">
+<link rel="stylesheet" href="/static/calendar/styles.css?v=4">
+<link rel="stylesheet" href="/static/shared/feedback.css?v=4">
+<link rel="stylesheet" href="/static/shared/responsive.css?v=4">
 </head>
 <body>
 
@@ -87,6 +87,7 @@
     <img class="mark-logo" src="/static/shared/logo.png" alt="">
     <button type="button" id="railChats" class="rail-btn on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg></button>
     <button type="button" id="railCal" class="rail-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M8 3v4M16 3v4"/></svg></button>
+    <button type="button" id="railBell" class="rail-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg><span id="bellCount" class="rail-badge" hidden></span></button>
     <button type="button" id="railPrefs" class="rail-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button>
     <span class="rail-gap"></span>
     <button type="button" id="railLogout" class="rail-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8"/><path d="M6.4 7.4a7.5 7.5 0 1 0 11.2 0"/></svg></button>
@@ -94,7 +95,7 @@
   </nav>
   <aside>
     <div class="brand"><img class="mark-logo" src="/static/shared/logo.png" alt=""><strong id="title"></strong></div>
-    <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="sideCal" class="ghost" data-i="calendar" style="padding:2px 10px;font-size:12px"></button><button type="button" id="sideSettings" class="ghost" data-i="settings" style="padding:2px 10px;font-size:12px"></button><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
+    <div class="me"><span class="dot"></span><span id="who" style="flex:1"></span><button type="button" id="sideCal" class="ghost" data-i="calendar" style="padding:2px 10px;font-size:12px"></button><button type="button" id="sideBell" class="ghost" style="padding:2px 10px;font-size:12px"></button><button type="button" id="sideSettings" class="ghost" data-i="settings" style="padding:2px 10px;font-size:12px"></button><button type="button" id="logout" class="ghost" data-i="logout" style="padding:2px 10px;font-size:12px"></button></div>
     <div class="tabs">
       <button type="button" id="tabCreate" class="on" data-i="tabCreate"></button>
       <button type="button" id="tabPrivate" data-i="tabPrivate"></button>
@@ -104,7 +105,7 @@
       <input id="roomName" maxlength="40" autocomplete="off">
       <div class="seg">
         <label><input type="radio" name="vis" value="public" checked><span data-i="vPublic"></span></label>
-        <label><input type="radio" name="vis" value="private"><span data-i="vPrivate"></span></label>
+        <label><input type="radio" name="vis" value="private"><i class="ico-lock" aria-hidden="true"></i><span data-i="vPrivate"></span></label>
       </div>
       <input id="roomPw" type="password" maxlength="64" autocomplete="new-password" style="display:none">
       <button class="primary" data-i="makeRoom"></button>
@@ -118,10 +119,14 @@
     <div id="err"></div>
     <button type="button" id="roomsRetry" hidden>목록 다시 불러오기</button>
 
-    <h2 data-i="publicRooms"></h2>
-    <div id="publicRooms"></div>
-    <h2 data-i="roomList"></h2>
-    <div id="rooms"></div>
+    <details id="publicGroup" class="room-group" open>
+      <summary><h2 data-i="publicRooms"></h2></summary>
+      <div id="publicRooms"></div>
+    </details>
+    <details id="myGroup" class="room-group" open>
+      <summary><h2 data-i="roomList"></h2></summary>
+      <div id="rooms"></div>
+    </details>
   </aside>
 
   <main>
@@ -166,7 +171,7 @@
         </div>
         <select id="srcLang"></select>
         <input type="text" id="body" autocomplete="off">
-        <button class="primary" data-i="send"></button>
+        <button type="submit" id="send" class="send-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5V10l12 2-12 2z"/></svg></button>
       </form>
     </section>
   </main>
@@ -211,22 +216,28 @@
   <label><span data-i="target"></span><select id="prefTarget"></select></label>
 </div>
 
+<div id="alertPop" hidden role="dialog" aria-labelledby="alertTitle">
+  <strong id="alertTitle" data-i="alertsTitle"></strong>
+  <div id="alertItems"></div>
+</div>
+
 <div id="toast" role="status"></div>
-<script defer src="/static/i18n/messages.js?v=3"></script>
-<script defer src="/static/shared/common.js?v=3"></script>
-<script defer src="/static/i18n/ui.js?v=3"></script>
-<script defer src="/static/auth/index.js?v=3"></script>
-<script defer src="/static/rooms/index.js?v=3"></script>
-<script defer src="/static/chat/index.js?v=3"></script>
-<script defer src="/static/shared/feedback.js?v=3"></script>
-<script defer src="/static/shared/panels.js?v=3"></script>
-<script defer src="/static/shared/floatwin.js?v=3"></script>
-<script defer src="/static/chat/participants.js?v=3"></script>
-<script defer src="/static/calendar/index.js?v=3"></script>
-<script defer src="/static/media/index.js?v=3"></script>
-<script defer src="/static/media/pdf.js?v=3"></script>
-<script defer src="/static/ai.js?v=3"></script>
-<script defer src="/static/users/preferences.js?v=3"></script>
-<script defer src="/static/app.js?v=3"></script>
+<script defer src="/static/i18n/messages.js?v=4"></script>
+<script defer src="/static/shared/common.js?v=4"></script>
+<script defer src="/static/i18n/ui.js?v=4"></script>
+<script defer src="/static/auth/index.js?v=4"></script>
+<script defer src="/static/rooms/index.js?v=4"></script>
+<script defer src="/static/chat/index.js?v=4"></script>
+<script defer src="/static/shared/feedback.js?v=4"></script>
+<script defer src="/static/shared/panels.js?v=4"></script>
+<script defer src="/static/shared/floatwin.js?v=4"></script>
+<script defer src="/static/chat/participants.js?v=4"></script>
+<script defer src="/static/calendar/index.js?v=4"></script>
+<script defer src="/static/calendar/alerts.js?v=4"></script>
+<script defer src="/static/media/index.js?v=4"></script>
+<script defer src="/static/media/pdf.js?v=4"></script>
+<script defer src="/static/ai.js?v=4"></script>
+<script defer src="/static/users/preferences.js?v=4"></script>
+<script defer src="/static/app.js?v=4"></script>
 </body>
 </html>

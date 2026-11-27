@@ -24,7 +24,7 @@
     .chat-head .titles { flex:1 1 0; }
     #status { display:none; }
     .room-menu { order:2; }
-    #settingsPop { left:12px; right:12px; top:auto; bottom:12px; width:auto; }
+    #settingsPop, #alertPop { left:12px; right:12px; top:auto; bottom:12px; width:auto; }
     .tl { order:3; flex:1 1 100%; }
     .tl select { flex:1; }
     .body { max-width:84%; }

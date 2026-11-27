@@ -59,6 +59,7 @@ async function loadCalendar(state) {
     if (state !== calendarState || !calendarWin?.open) return;
     state.events = events;
     renderCalendar(state);
+    updateAlerts(events);  // 추가·수정·삭제한 결과가 종 알림에도 바로 반영된다
   } catch (error) {
     if (state === calendarState && calendarWin?.open) toast(calErrorText(error));
   }
@@ -266,6 +267,7 @@ function suggestionCard(suggestion, room) {
     try {
       await api(CAL_API, "POST", {title: title.value.trim(), date: date.value, time: time.value, note: suggestion.evidence, roomId: room.roomId, roomName: room.roomName});
       done = true; addButton.textContent = t("calAdded"); node.classList.add("done");
+      refreshAlerts();
       for (const input of [title, date, time]) input.disabled = true;
     } catch (error) {
       toast(calErrorText(error)); addButton.disabled = false;

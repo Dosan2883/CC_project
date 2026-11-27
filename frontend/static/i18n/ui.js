@@ -10,6 +10,7 @@ function applyI18n() {
   $("privName").placeholder = t("roomName");
   $("privPw").placeholder = t("pwEnter");
   $("attach").title = t("attach");
+  $("send").title = $("send").ariaLabel = t("send");
   $("srcLang").title = t("srcLang");
   $("user").placeholder = t("nickname"); $("authPw").placeholder = t("password"); $("authPw2").placeholder = t("passwordConfirm");
   $("docFold").title = t("panelClose");
@@ -17,6 +18,7 @@ function applyI18n() {
   $("railChats").title = t("roomList"); $("railCal").title = t("calendar"); $("railPrefs").title = t("settings"); $("railLogout").title = t("logout");
   $("roomMenuButton").title = $("roomMenuButton").ariaLabel = t("roomMenu");
   if (typeof refreshSelectionBar === "function") refreshSelectionBar();
+  if (typeof renderAlerts === "function") renderAlerts();  // 종 아이콘 설명과 알림 목록도 새 언어로
   setAuthMode(authMode);
   renderRooms();
   renderReadReceipts();
