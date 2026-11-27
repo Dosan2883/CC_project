@@ -9,7 +9,7 @@
   #app > aside { transition:opacity .25s ease, visibility 0s linear 0s; }
   @media (width > 720px) {
     #app.side-collapsed > aside { opacity:0; visibility:hidden; overflow:hidden; pointer-events:none; padding-inline:0; border-right:0; transition:opacity .2s ease, visibility 0s linear .3s; }
-    #sideCal, #sideSettings, #logout { display:none; }  /* 레일이 없는 모바일에서만 닉네임 줄에 보인다 */
+    #sideCal, #sideBell, #sideSettings, #logout { display:none; }  /* 레일이 없는 모바일에서만 닉네임 줄에 보인다 */
   }
   #app.doc-open { --doc-w:var(--doc-open-w); --info-w:0px; }  /* 요약 창이 열리면 상세 정보는 접는다. 요약 창 폭은 panels.js가 정한다 */
   #app:not(.in-room) { --info-w:0px; }
@@ -24,11 +24,22 @@
   .rail-btn svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }  /* 무채색 선 아이콘 */
   .rail-gap { flex:1; }
   /* 설정 선택 상자 */
-  #settingsPop { position:fixed; left:var(--settings-left, 72px); top:var(--settings-top, 120px); z-index:40; width:260px; max-height:calc(100dvh - 24px); overflow:auto; display:grid; gap:12px; padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); }
-  #settingsPop[hidden] { display:none; }
-  #settingsPop strong { font-size:14px; }
+  #settingsPop, #alertPop { position:fixed; left:var(--pop-left, 72px); top:var(--pop-top, 120px); z-index:40; width:260px; max-height:calc(100dvh - 24px); overflow:auto; display:grid; gap:12px; padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); }
+  #settingsPop[hidden], #alertPop[hidden] { display:none; }
+  #settingsPop strong, #alertPop strong { font-size:14px; }
   #settingsPop label { display:grid; gap:4px; font-size:12px; color:var(--muted); }
   #settingsPop select { width:100%; font-size:14px; color:var(--text); }
+  /* 마감 알림 */
+  #alertPop { width:300px; align-content:start; }
+  #alertItems { display:grid; gap:6px; }
+  .alert-item { display:grid; gap:2px; text-align:left; padding:8px 10px; border-radius:10px; background:var(--bubble); }
+  #alertPop .alert-item strong { overflow-wrap:anywhere; font-weight:500; }
+  #alertPop .alert-item.unread strong { font-weight:800; }
+  .alert-item .alert-when { font-size:13px; color:var(--accent); }
+  .alert-item small { font-size:12px; color:var(--muted); }
+  #railBell { position:relative; }
+  .rail-badge { position:absolute; top:4px; right:4px; min-width:17px; height:17px; padding:0 4px; border-radius:999px; background:var(--danger); color:#fff; font-size:11px; font-weight:700; line-height:17px; }
+  .rail-badge[hidden] { display:none; }
   #railMe { width:38px; height:38px; font-size:15px; }
   /* 오른쪽 상세 정보 */
   #info { min-width:0; min-height:0; overflow:hidden auto; background:var(--panel); border-left:1px solid var(--line); transition:opacity .25s ease; }

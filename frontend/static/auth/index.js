@@ -5,6 +5,7 @@ const tokenStore = {  // 탭마다 따로 저장해서, 한 브라우저에서 �
 };
 let authMode = "login";
 let authGeneration = 0;
+let pickedLocale = null;  // 로그인 화면에서 직접 고른 표시 언어(고르지 않았으면 계정에 저장된 언어를 쓴다)
 function setAuthMode(mode) {
   authMode = mode;
   $("tabLogin").classList.toggle("on", mode === "login"); $("tabSignup").classList.toggle("on", mode === "signup");
@@ -16,7 +17,7 @@ function setAuthMode(mode) {
 $("tabLogin").onclick = () => setAuthMode("login");
 $("tabSignup").onclick = () => setAuthMode("signup");
 $("uiLocale").value = locale;
-$("uiLocale").onchange = e => { locale = e.target.value; applyI18n(); if (token) savePreferences({uiLocale: locale}); };
+$("uiLocale").onchange = e => { locale = e.target.value; applyI18n(); if (token) savePreferences({uiLocale: locale}); else pickedLocale = locale; };
 
 $("authForm").onsubmit = async e => {
   e.preventDefault();
@@ -43,11 +44,16 @@ $("authForm").onsubmit = async e => {
 async function startSession(tok, nickname, generation = authGeneration) {
   if (generation !== authGeneration) return;
   cancelRoomLoads(); cancelApiRequests();
-  const [saved] = await Promise.all([
+  let [saved] = await Promise.all([
     api("/api/users/me/preferences", "GET", undefined, {authToken:tok}),
     loadLanguageOptions(),
   ]);
   if (generation !== authGeneration) return;
+  if (pickedLocale && pickedLocale !== saved.uiLocale) {  // 로그인 화면에서 고른 언어가 우선이고, 계정에도 저장한다(저장에 실패해도 이번 화면에는 적용)
+    const picked = pickedLocale;
+    saved = await api("/api/users/me/preferences", "PATCH", {uiLocale:picked}, {authToken:tok}).catch(() => ({...saved, uiLocale:picked}));
+    if (generation !== authGeneration) return;
+  }
   clearImagePreviews();
   lastRooms = []; lastPublic = [];
   token = tok; me = nickname;
@@ -58,10 +64,12 @@ async function startSession(tok, nickname, generation = authGeneration) {
     throw error;
   }
   tokenStore.set(tok);
+  pickedLocale = null;
   $("login").style.display = "none"; $("app").style.display = "grid";
   $("who").textContent = me;
   $("railMe").textContent = initial(me); $("railMe").style.background = color(me);
   clearInterval(roomsTimer); loadRooms(); roomsTimer = setInterval(loadRooms, 3000);
+  startAlerts();
 }
 function logout(expired) {
   authGeneration++;
@@ -72,6 +80,7 @@ function logout(expired) {
   clearImagePreviews();
   closeSocket(); currentRoom = null; token = null; closeDocPanel(); me = null; tokenStore.set(null);
   $("settingsPop").hidden = true;
+  stopAlerts();
   $("attachMenu").classList.remove("open");
   $("roomMenu").open = false;
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();

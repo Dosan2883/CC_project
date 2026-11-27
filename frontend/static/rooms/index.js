@@ -42,7 +42,8 @@ function renderList(box, list, emptyKey, action) {
     row.className = "room" + (currentRoom && currentRoom.roomId === r.roomId ? " active" : "");
     const ic = document.createElement("div"); ic.className = "ic"; ic.style.background = color(r.name); ic.textContent = initial(r.name);
     const info = document.createElement("div"); info.className = "info";
-    const name = document.createElement("div"); name.className = "name"; name.textContent = (r.visibility === "private" ? "🔒 " : "") + r.name;  // textContent로 XSS 방지
+    const name = document.createElement("div"); name.className = "name"; name.textContent = r.name;  // textContent로 XSS 방지
+    if (r.visibility === "private") { name.className = "name private"; name.ariaLabel = `${t("vPrivate")} ${r.name}`; }  // 비공개방은 이름 앞에 자물쇠(CSS)
     const sub = document.createElement("div"); sub.className = "sub";
     sub.textContent = `${r.memberCount}${t("memberUnit")} · ${r.online}${t("onlineUnit")}`;
     if (r.joined && r.unreadCount) sub.textContent += ` · ${t("unread")} ${r.unreadCount}`;
@@ -109,3 +110,10 @@ $("privateForm").onsubmit = async e => {
     openSavedRoom(r);
   } catch (err) { $("privPw").value = ""; showErr(err, { 403: t("eBad"), 429: t("eMany") }); }
 };
+
+// 공개 채팅방·내 채팅방 목록의 접힘 상태는 브라우저에 기억한다.
+for (const id of ["publicGroup", "myGroup"]) {
+  const group = $(id);
+  try { group.open = localStorage.getItem(id) !== "closed"; } catch { /* 저장소를 못 쓰면 펼친 상태 */ }
+  group.ontoggle = () => { try { localStorage.setItem(id, group.open ? "open" : "closed"); } catch { /* 저장 실패는 무시 */ } };
+}

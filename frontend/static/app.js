@@ -22,7 +22,7 @@ $("railChats").onclick = toggleSideList;
 $("railCal").onclick = toggleCalendar;
 $("sideCal").onclick = toggleCalendar;
 // 데스크톱은 레일, 모바일은 닉네임 줄에서 설정을 연다.
-const settingsPop = $("settingsPop"), settingsButtons = "#railPrefs, #sideSettings";
+const settingsPop = $("settingsPop");
 const themeSelect = $("prefTheme"), pageTheme = document.documentElement.dataset;
 themeSelect.value = pageTheme.theme ?? "system";
 themeSelect.onchange = () => {
@@ -31,20 +31,31 @@ themeSelect.onchange = () => {
   else pageTheme.theme = theme;
   try { localStorage.setItem("theme", theme); } catch { /* 현재 페이지에는 계속 적용한다. */ }
 };
-function toggleSettings(anchor) {
-  settingsPop.hidden = !settingsPop.hidden;
-  if (settingsPop.hidden) return;
-  // 레일의 설정 아이콘 바로 옆에 띄운다(모바일은 CSS대로 화면 아래). 화면 아래로 넘치지 않게 위로 올린다.
+// 설정과 마감 알림은 같은 방식의 선택 상자다. 하나를 열면 다른 하나는 닫고, 바깥을 누르거나 Esc를 누르면 닫는다.
+const popovers = [
+  {box: settingsPop, buttons: "#railPrefs, #sideSettings"},
+  {box: $("alertPop"), buttons: "#railBell, #sideBell"},
+];
+function togglePopover(box, anchor) {
+  for (const other of popovers) if (other.box !== box) other.box.hidden = true;
+  box.hidden = !box.hidden;
+  if (box.hidden) return;
+  // 레일의 아이콘 바로 옆에 띄운다(모바일은 CSS대로 화면 아래). 화면 아래로 넘치지 않게 위로 올린다.
   if (anchor.closest("#rail")) {
-    const box = anchor.getBoundingClientRect();
-    settingsPop.style.setProperty("--settings-left", `${Math.round(box.right + 8)}px`);
-    settingsPop.style.setProperty("--settings-top", `${Math.max(8, Math.min(Math.round(box.top), innerHeight - settingsPop.offsetHeight - 8))}px`);
+    const rect = anchor.getBoundingClientRect();
+    box.style.setProperty("--pop-left", `${Math.round(rect.right + 8)}px`);
+    box.style.setProperty("--pop-top", `${Math.max(8, Math.min(Math.round(rect.top), innerHeight - box.offsetHeight - 8))}px`);
   }
 }
-$("railPrefs").onclick = () => toggleSettings($("railPrefs"));
-$("sideSettings").onclick = () => toggleSettings($("sideSettings"));
-document.addEventListener("click", event => { if (!settingsPop.hidden && !settingsPop.contains(event.target) && !event.target.closest(settingsButtons)) settingsPop.hidden = true; });
-document.addEventListener("keydown", event => { if (event.key === "Escape") settingsPop.hidden = true; });
+for (const id of ["railPrefs", "sideSettings"]) $(id).onclick = () => togglePopover(settingsPop, $(id));
+for (const id of ["railBell", "sideBell"]) $(id).onclick = () => {
+  renderAlerts();
+  togglePopover($("alertPop"), $(id));
+  if (!$("alertPop").hidden) markAlertsRead();
+};
+document.addEventListener("click", event => { for (const {box, buttons} of popovers) if (!box.hidden && !box.contains(event.target) && !event.target.closest(buttons)) box.hidden = true; });
+document.addEventListener("keydown", event => { if (event.key === "Escape") for (const {box} of popovers) box.hidden = true; });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshAlerts(); });  // 다른 탭에 있다가 돌아오면 바로 다시 확인
 $("railLogout").onclick = () => { settingsPop.hidden = true; $("logout").click(); };
 // 같은 탭에서 새로고침해도 로그인이 유지되도록, 저장된 토큰이 아직 유효한지 확인한다.
 purgeLegacyOutboxes();

@@ -46,6 +46,10 @@ main { display:flex; flex-direction:column; min-width:0; min-height:0; }
   #form input[type=text] { flex:1; border:0; background:transparent; border-radius:0; padding:9px 8px; }
   #form input[type=text]:focus { outline:none; }
   #form select { border-radius:999px; }
+  /* 보내기: 파란 글자 버튼 대신 회색 종이비행기 아이콘 */
+  #form .send-btn { flex:none; width:38px; height:38px; display:grid; place-items:center; padding:0; border-radius:50%; color:var(--muted); }
+  #form .send-btn:hover:not(:disabled) { background:var(--bubble); color:var(--text); }
+  #form .send-btn svg { width:22px; height:22px; fill:currentColor; }
   #attach { border-radius:50%; width:38px; height:38px; padding:0; font-size:20px; line-height:1; background:var(--bubble); }
   .attach-wrap { position:relative; }
   #attachMenu { display:none; position:absolute; bottom:46px; left:0; z-index:5; background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow-pop); padding:6px; min-width:190px; }
